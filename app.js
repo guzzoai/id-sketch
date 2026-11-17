@@ -288,6 +288,7 @@ function load() {
       if (data.grid) Object.assign(state.grid, data.grid);
       state.snapObjects = !!data.snapObjects;
       if (data.right) Object.assign(state.right, data.right);
+      state.bridge = !!data.bridge;
     }
   } catch (e) { /* start fresh */ }
   if (!state.canvases.length) state.canvases = [newCanvasData('Canvas 1')];
@@ -307,7 +308,7 @@ function saveNow() {
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify({
       canvases: state.canvases, activeId: state.activeId, style: state.style,
-      grid: state.grid, snapObjects: state.snapObjects, right: state.right,
+      grid: state.grid, snapObjects: state.snapObjects, right: state.right, bridge: !!state.bridge,
     }));
   } catch (e) { console.warn('Opslaan mislukt', e); }
 }
@@ -907,6 +908,14 @@ function visualBounds(list) {
   let [x1, y1, x2, y2] = groupBounds(list);
   for (const el of list) if (hasCone(el)) for (const p of conePoints(el)) {
     x1 = Math.min(x1, p[0]); y1 = Math.min(y1, p[1]); x2 = Math.max(x2, p[0]); y2 = Math.max(y2, p[1]);
+  }
+  // labels can stick out of their object (next to a camera, or wider than a small shape)
+  for (const el of list) if (el.text && isBoxy(el)) {
+    const m = measure(el.text, el.fontSize);
+    const [lx, ly] = labelCenter(el, m);
+    const r = el.type === 'symbol' ? Math.max(m.w, m.h) / 2 : Math.hypot(m.w, m.h) / 2;
+    const hw = el.type === 'symbol' ? m.w / 2 : r, hh = el.type === 'symbol' ? m.h / 2 : r;
+    x1 = Math.min(x1, lx - hw); y1 = Math.min(y1, ly - hh); x2 = Math.max(x2, lx + hw); y2 = Math.max(y2, ly + hh);
   }
   return [x1, y1, x2, y2];
 }
@@ -2240,18 +2249,23 @@ const fileBase = () => doc.name.replace(/[\\/:*?"<>|]+/g, '_') || 'canvas';
 $('exportPng').addEventListener('click', () => {
   const list = state.selected.size ? selectedEls() : visEls();
   if (!list.length) { alert('Er staat nog niets zichtbaars op dit canvas.'); return; }
+  renderPng(list, 2).toBlob(b => download(b, fileBase() + '.png'));
+});
+// draw a list of elements on a fresh canvas; maxSize caps the longest side in pixels
+function renderPng(list, scale, maxSize) {
   const [x1, y1, x2, y2] = visualBounds(list);
-  const pad = 24, scale = 2;
+  const pad = 24;
+  const bw = x2 - x1 + pad * 2, bh = y2 - y1 + pad * 2;
+  if (maxSize) scale = Math.min(scale, maxSize / Math.max(bw, bh));
   const off = document.createElement('canvas');
-  off.width = Math.ceil((x2 - x1 + pad * 2) * scale);
-  off.height = Math.ceil((y2 - y1 + pad * 2) * scale);
+  off.width = Math.max(1, Math.ceil(bw * scale));
+  off.height = Math.max(1, Math.ceil(bh * scale));
   const c = off.getContext('2d');
   c.fillStyle = BG; c.fillRect(0, 0, off.width, off.height);
   c.setTransform(scale, 0, 0, scale, (pad - x1) * scale, (pad - y1) * scale);
-  const r = rough.canvas(off);
-  drawList(c, r, list, false);
-  off.toBlob(b => download(b, fileBase() + '.png'));
-});
+  drawList(c, rough.canvas(off), list, false);
+  return off;
+}
 $('importImg').addEventListener('click', () => $('imgInput').click());
 $('imgInput').addEventListener('change', e => {
   const files = [...e.target.files].filter(f => f.type.startsWith('image/'));
@@ -2500,6 +2514,261 @@ canvas.addEventListener('drop', e => {
   if (item) insertTemplate(item, toWorld(e.clientX, e.clientY));
 });
 
+// ---------- link with Claude (MCP bridge) ----------
+// mcp/server.js runs next to Claude and opens a small bridge on this computer. When the link is switched
+// on, this tab listens there for drawing commands and sends the results back.
+const BRIDGE_URL = 'http://127.0.0.1:47821';
+const BRIDGE_STYLE = ['stroke', 'bg', 'fillStyle', 'strokeWidth', 'strokeStyle', 'roughness', 'edges', 'opacity', 'fontSize', 'textColor'];
+let bridgeES = null, bridgeTimer = 0, bridgeUp = false;
+const num = (v, name) => { if (typeof v !== 'number' || !isFinite(v)) throw new Error(`${name} moet een getal zijn`); return v; };
+const deg = el => Math.round(((el.angle || 0) * 180) / Math.PI);
+function bridgeLayer(name) {
+  if (!name) return doc.activeLayer;
+  let l = doc.layers.find(x => x.name.toLowerCase() === String(name).toLowerCase());
+  if (!l) { l = newLayer(String(name)); doc.layers.push(l); }
+  return l.id;
+}
+function bridgeAim(el, s) {
+  if (s.look_at) {
+    const [cx, cy] = center(el);
+    el.angle = Math.atan2(num(s.look_at.x, 'look_at.x') - cx, -(num(s.look_at.y, 'look_at.y') - cy));
+  } else if (s.angle !== undefined) el.angle = (num(s.angle, 'angle') * Math.PI) / 180;
+  if (el.angle !== undefined && Math.abs(el.angle) < 1e-9) el.angle = 0;
+}
+function bridgePlace(el, s) {
+  if (s.cx !== undefined) el.x = num(s.cx, 'cx') - el.w / 2; else if (s.x !== undefined) el.x = num(s.x, 'x');
+  if (s.cy !== undefined) el.y = num(s.cy, 'cy') - el.h / 2; else if (s.y !== undefined) el.y = num(s.y, 'y');
+}
+function bridgeStyle(el, s) {
+  for (const k of BRIDGE_STYLE) if (s[k] !== undefined) el[k] = s[k];
+  if (hasCone(el)) {
+    if (s.fov !== undefined) el.fov = clamp(Math.round(num(s.fov, 'fov')), 5, 170);
+    if (s.range !== undefined) el.range = clamp(Math.round(num(s.range, 'range')), 40, 3000);
+  }
+  if (s.flip !== undefined && el.type === 'symbol') el.flip = !!s.flip;
+}
+function bridgeMake(s, base) {
+  s = Object.assign({}, base, s);
+  const t = s.type;
+  const item = libItem(t);
+  let el;
+  if (t === 'wall' && s.x1 !== undefined) {
+    // a wall between two points: a filled bar turned to the right angle
+    const dx = num(s.x2, 'x2') - num(s.x1, 'x1'), dy = num(s.y2, 'y2') - num(s.y1, 'y1');
+    el = libElement(item);
+    el.w = Math.hypot(dx, dy); el.h = s.thickness || 8;
+    el.x = (s.x1 + s.x2) / 2 - el.w / 2; el.y = (s.y1 + s.y2) / 2 - el.h / 2;
+    el.angle = Math.atan2(dy, dx);
+    bridgeStyle(el, s);
+    if (s.stroke && s.bg === undefined) el.bg = el.stroke;
+    return el;
+  }
+  if (LINEAR.includes(t)) {
+    el = makeEl(t, num(s.x1, 'x1'), num(s.y1, 'y1'));
+    el.points = [[0, 0], [num(s.x2, 'x2') - s.x1, num(s.y2, 'y2') - s.y1]];
+    bridgeStyle(el, s);
+    return el;
+  }
+  if (t === 'text') {
+    el = makeEl('text', 0, 0);
+    el.text = String(s.label !== undefined ? s.label : s.text || '');
+    if (!el.text.trim()) throw new Error('een tekst-element heeft een label nodig');
+    bridgeStyle(el, s);
+    fitText(el);
+    bridgePlace(el, s); bridgeAim(el, s);
+    return el;
+  }
+  if (item) el = libElement(item);
+  else if (SHAPES.includes(t)) el = makeEl(t, 0, 0);
+  else throw new Error('onbekend type: ' + t);
+  if (s.w !== undefined) el.w = Math.max(1, num(s.w, 'w'));
+  if (s.h !== undefined) el.h = Math.max(1, num(s.h, 'h'));
+  if (!el.w || !el.h) throw new Error(`${t} heeft w en h nodig`);
+  bridgeStyle(el, s);
+  if (t === 'wall' && s.stroke && s.bg === undefined) el.bg = el.stroke;
+  bridgePlace(el, s); bridgeAim(el, s);
+  const label = s.label !== undefined ? s.label : s.text;
+  if (label !== undefined) el.text = String(label);
+  else if (el.kind === 'camera') el.autoLabel = true;
+  return el;
+}
+function bridgeBrief(el, layers) {
+  const r1 = v => Math.round(v * 10) / 10;
+  const o = { id: el.id, type: el.type === 'symbol' ? el.kind : el.type, layer: (layers.get(el.layer) || {}).name };
+  if (LINEAR.includes(el.type)) {
+    const b = el.points[el.points.length - 1];
+    Object.assign(o, { x1: r1(el.x), y1: r1(el.y), x2: r1(el.x + b[0]), y2: r1(el.y + b[1]) });
+  } else {
+    const b = bounds(el);
+    Object.assign(o, { x: r1(b[0]), y: r1(b[1]), w: r1(b[2] - b[0]), h: r1(b[3] - b[1]) });
+  }
+  if (el.angle) o.angle = deg(el);
+  if (el.text) o.label = el.text;
+  if (el.type !== 'image') { o.stroke = el.stroke; if (isBoxy(el) && el.bg !== 'transparent') o.bg = el.bg; }
+  if (hasCone(el)) { o.fov = el.fov; o.range = el.range; }
+  if (el.groupId) o.group = el.groupId;
+  if (el.boolId) o.combined = el.bool;
+  return o;
+}
+function zoomToFit() {
+  const list = visEls();
+  if (!list.length) return;
+  const [x1, y1, x2, y2] = visualBounds(list);
+  // leave room for the side panels
+  const padL = innerWidth > 900 ? 260 : 20, padR = state.right.open && innerWidth > 900 ? 280 : 20, padY = 80;
+  const z = clamp(Math.min((innerWidth - padL - padR) / Math.max(1, x2 - x1), (innerHeight - padY * 2) / Math.max(1, y2 - y1)), 0.1, 2);
+  const v = view();
+  v.zoom = z;
+  v.scrollX = (padL + (innerWidth - padL - padR) / 2) / z - (x1 + x2) / 2;
+  v.scrollY = innerHeight / 2 / z - (y1 + y2) / 2;
+  save(); updateChrome(); render();
+}
+function bridgeRefresh() { dropHiddenSelection(); commit(); renderPanel(); render(); }
+function bridgeExec(tool, a) {
+  if (editing) finishEdit();
+  drag = null;
+  if (tool === 'get_canvas') {
+    const layers = layerMap();
+    const list = els();
+    const out = {
+      canvases: state.canvases.map(c => ({ name: c.name, active: c === doc, elements: c.elements.length })),
+      canvas: doc.name,
+      layers: [...doc.layers].reverse().map(l => ({ name: l.name, active: l.id === doc.activeLayer, visible: l.visible, locked: l.locked })),
+      bounds: list.length ? visualBounds(list).map(Math.round) : null,
+      note: 'px, y down; layers listed top first; angle in degrees clockwise, 0 = facing up',
+    };
+    if (a.include_elements !== false) out.elements = list.map(e => bridgeBrief(e, layers));
+    return out;
+  }
+  if (tool === 'add_elements') {
+    if (!Array.isArray(a.elements) || !a.elements.length) throw new Error('elements ontbreekt');
+    const groups = new Map();
+    const made = a.elements.map((s, i) => {
+      let el;
+      try { el = bridgeMake(s, a.style); } catch (err) { throw new Error(`element ${i} (${s && s.type}): ${err.message}`); }
+      if (s.group) { if (!groups.has(s.group)) groups.set(s.group, uid()); el.groupId = groups.get(s.group); }
+      return el;
+    });
+    // only now that every element is valid: create missing layers and place the elements
+    made.forEach((el, i) => { el.layer = bridgeLayer(a.elements[i].layer || a.layer); });
+    let cams = els().filter(x => x.kind === 'camera').length;
+    for (const el of made) if (el.autoLabel) { delete el.autoLabel; el.text = 'Cam ' + (++cams); }
+    doc.elements.push(...made);
+    state.selected = new Set(made.map(e => e.id));
+    if (state.tool !== 'selection') setTool('selection', true);
+    bridgeRefresh();
+    if (a.fit_view !== false) zoomToFit();
+    return { added: made.length, ids: made.map(e => e.id), bounds: visualBounds(made).map(Math.round) };
+  }
+  if (tool === 'update_elements') {
+    if (!Array.isArray(a.updates)) throw new Error('updates ontbreekt');
+    const byId = new Map(els().map(e => [e.id, e]));
+    const missing = [];
+    for (const s of a.updates) {
+      const el = byId.get(s.id);
+      if (!el) { missing.push(s.id); continue; }
+      if (LINEAR.includes(el.type)) {
+        const b = el.points[el.points.length - 1];
+        const p = { x1: el.x, y1: el.y, x2: el.x + b[0], y2: el.y + b[1] };
+        for (const k of Object.keys(p)) if (s[k] !== undefined) p[k] = num(s[k], k);
+        el.x = p.x1; el.y = p.y1; el.points = [[0, 0], [p.x2 - p.x1, p.y2 - p.y1]];
+        bridgeStyle(el, s);
+      } else if (el.type === 'draw') {
+        bridgeStyle(el, s);
+        if (s.x !== undefined) el.x += num(s.x, 'x') - bounds(el)[0];
+        if (s.y !== undefined) el.y += num(s.y, 'y') - bounds(el)[1];
+      } else {
+        bridgeStyle(el, s);
+        const label = s.label !== undefined ? s.label : s.text;
+        if (label !== undefined && canLabel(el)) el.text = String(label);
+        if (el.type === 'text') fitText(el);
+        else {
+          if (s.w !== undefined) el.w = Math.max(1, num(s.w, 'w'));
+          if (s.h !== undefined) el.h = Math.max(1, num(s.h, 'h'));
+        }
+        bridgePlace(el, s); bridgeAim(el, s);
+      }
+      if (s.layer) el.layer = bridgeLayer(s.layer);
+    }
+    bridgeRefresh();
+    return { updated: a.updates.length - missing.length, not_found: missing };
+  }
+  if (tool === 'delete_elements') {
+    const before = els().length;
+    if (a.all) doc.elements = [];
+    else {
+      const ids = new Set(a.ids || []);
+      const l = a.layer && doc.layers.find(x => x.name.toLowerCase() === String(a.layer).toLowerCase());
+      doc.elements = els().filter(e => !ids.has(e.id) && !(l && e.layer === l.id));
+    }
+    const live = new Set(els().map(e => e.id));
+    for (const id of [...state.selected]) if (!live.has(id)) state.selected.delete(id);
+    bridgeRefresh();
+    return { deleted: before - els().length };
+  }
+  if (tool === 'set_canvas') {
+    const name = String(a.name || '').trim();
+    if (!name) throw new Error('name ontbreekt');
+    const found = state.canvases.find(c => c.name.toLowerCase() === name.toLowerCase());
+    if (found) setActive(found); else addCanvas(name);
+    return { canvas: doc.name, created: !found, elements: els().length };
+  }
+  if (tool === 'set_layer') {
+    const id = bridgeLayer(a.name);
+    const l = doc.layers.find(x => x.id === id);
+    if (a.rename) l.name = String(a.rename);
+    if (a.visible !== undefined) l.visible = !!a.visible;
+    if (a.locked !== undefined) l.locked = !!a.locked;
+    if (a.active) doc.activeLayer = l.id;
+    bridgeRefresh(); save();
+    return { layers: [...doc.layers].reverse().map(x => ({ name: x.name, active: x.id === doc.activeLayer, visible: x.visible, locked: x.locked })) };
+  }
+  if (tool === 'export_png') {
+    const list = visEls();
+    if (!list.length) throw new Error('het canvas is leeg');
+    const off = renderPng(list, 2, clamp(a.max_size || 1400, 200, 2400));
+    return { image: off.toDataURL('image/png').split(',')[1], width: off.width, height: off.height, canvas: doc.name, bounds: visualBounds(list).map(Math.round) };
+  }
+  throw new Error('onbekende opdracht: ' + tool);
+}
+function setBridgeUp(up) {
+  if (up && !bridgeUp) toast('Verbonden met Claude.');
+  bridgeUp = up;
+  renderBridge();
+}
+function renderBridge() {
+  const b = $('bridgeBtn');
+  b.textContent = 'Koppeling met Claude: ' + (!state.bridge ? 'uit' : bridgeUp ? 'verbonden' : 'wacht op Claude…');
+  b.classList.toggle('primary', !!state.bridge);
+  $('bridgeDot').hidden = !(state.bridge && bridgeUp);
+}
+function bridgeConnect() {
+  clearTimeout(bridgeTimer);
+  if (!state.bridge || bridgeES) return;
+  let es;
+  try { es = new EventSource(BRIDGE_URL + '/events'); } catch (e) { return; }
+  bridgeES = es;
+  es.onopen = () => setBridgeUp(true);
+  es.onmessage = async ev => {
+    let cmd, out;
+    try { cmd = JSON.parse(ev.data); } catch (e) { return; }
+    try { out = { id: cmd.id, ok: true, result: await bridgeExec(cmd.tool, cmd.args || {}) }; }
+    catch (err) { out = { id: cmd.id, ok: false, error: String(err.message || err) }; }
+    fetch(BRIDGE_URL + '/result', { method: 'POST', body: JSON.stringify(out) }).catch(() => {});
+  };
+  es.onerror = () => {
+    es.close();
+    if (bridgeES === es) bridgeES = null;
+    setBridgeUp(false);
+    bridgeTimer = setTimeout(bridgeConnect, 4000); // the server only runs while Claude is open: keep trying
+  };
+}
+$('bridgeBtn').addEventListener('click', () => {
+  state.bridge = !state.bridge;
+  if (!state.bridge && bridgeES) { bridgeES.close(); bridgeES = null; bridgeUp = false; }
+  save(); renderBridge(); bridgeConnect();
+});
+
 // ---------- UI: bottom bar ----------
 function updateChrome() {
   if (!doc) return;
@@ -2581,6 +2850,8 @@ window.addEventListener('resize', resize);
 renderToolbar();
 load();
 bootImages();
+renderBridge();
+bridgeConnect();
 renderLibrary();
 renderRight();
 renderGridPop();

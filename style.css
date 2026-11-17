@@ -29,6 +29,7 @@ button svg { display: block; }
 #docName { color: var(--muted); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 @media (max-width: 980px) { #docName { display: none; } }
+#bridgeDot { width: 8px; height: 8px; border-radius: 50%; background: #3a994c; box-shadow: 0 0 0 3px rgba(58,153,76,.25); }
 
 #toolbar {
   position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 20;
