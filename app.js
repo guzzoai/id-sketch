@@ -62,6 +62,11 @@ const ICON = {
   bSubtract: svg('<path d="M4 4h10v6h-4v4H4z" fill="currentColor" fill-opacity=".3"/><path d="M14 10h6v10H10v-6" stroke-dasharray="2 2.5"/>'),
   bIntersect: svg('<path d="M10 10h4v4h-4z" fill="currentColor" fill-opacity=".45"/><path d="M10 4H4v10h6M14 20h6V10h-6M14 4v6M10 20v-6" stroke-dasharray="2 2.5"/>'),
   bExclude: svg('<path d="M4 4h10v6h6v10H10v-6H4zM10 10v4h4v-4z" fill="currentColor" fill-opacity=".3" fill-rule="evenodd"/>'),
+  image: svg('<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M21 15l-5-5L5 20"/>'),
+  arPack: svg('<rect x="3" y="3" width="10" height="8" rx="1"/><rect x="15" y="3" width="6" height="8" rx="1"/><rect x="3" y="13" width="6" height="8" rx="1"/><rect x="11" y="13" width="10" height="8" rx="1"/>'),
+  arRow: svg('<rect x="2" y="7" width="5" height="10" rx="1"/><rect x="9" y="7" width="7" height="10" rx="1"/><rect x="18" y="7" width="4" height="10" rx="1"/>'),
+  arCol: svg('<rect x="7" y="2" width="10" height="5" rx="1"/><rect x="7" y="9" width="10" height="7" rx="1"/><rect x="7" y="18" width="10" height="4" rx="1"/>'),
+  arGrid: svg('<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>'),
   eye: svg('<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
   eyeOff: svg('<path d="M4 4l16 16M9.9 5.2A9.6 9.6 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3 3.9M6.3 6.6A17 17 0 0 0 2 12s3.6 7 10 7c1.7 0 3.200-.5 4.500-1.200M9.900 9.900a3 3 0 0 0 4.200 4.200"/>'),
   layers: svg('<path d="M12 3l9 5-9 5-9-5zM3 12.500l9 5 9-5M3 17l9 5 9-5"/>'),
@@ -83,6 +88,7 @@ const TOOLS = [
   { id: 'line', title: 'Lijn', key: 'L', num: '6' },
   { id: 'draw', title: 'Potlood', key: 'P', num: '7' },
   { id: 'text', title: 'Tekst', key: 'T', num: '8' },
+  { id: 'image', title: 'Afbeelding invoegen', key: 'I', num: '9' },
   { id: 'eraser', title: 'Gum', key: 'E', num: '0' },
 ];
 
@@ -157,6 +163,112 @@ function canDraw() {
   toast(`Laag "${l.name}" is ${l.locked ? 'vergrendeld' : 'verborgen'}: kies een andere laag of zet hem weer aan.`);
   return false;
 }
+// ---------- images ----------
+// Elements only carry an imageId; the pixels live in IndexedDB (localStorage is far too small for them).
+const CLIP_MARK = 'ID Sketch';
+const MAX_IMAGE = 3000;
+const images = new Map(); // imageId -> { img, blob }
+let idb = null;
+let lastPointer = null;
+function openDb() {
+  return new Promise(res => {
+    try {
+      const r = indexedDB.open('idsketch', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('images');
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => res(null);
+    } catch (e) { res(null); }
+  });
+}
+function dbReq(mode, fn) {
+  return new Promise(res => {
+    if (!idb) return res(null);
+    try {
+      const rq = fn(idb.transaction('images', mode).objectStore('images'));
+      rq.onsuccess = () => res(rq.result);
+      rq.onerror = () => res(null);
+    } catch (e) { res(null); }
+  });
+}
+function decodeImage(blob) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => res(img);
+    img.onerror = () => rej(new Error('geen leesbare afbeelding'));
+    img.src = URL.createObjectURL(blob);
+  });
+}
+async function registerImage(id, blob) {
+  const img = await decodeImage(blob);
+  images.set(id, { img, blob });
+  render();
+  return img;
+}
+// store a new image (scaled down when it is huge) and return its id and size
+async function addImageBlob(blob) {
+  let img = await decodeImage(blob);
+  const big = Math.max(img.naturalWidth, img.naturalHeight);
+  if (big > MAX_IMAGE) {
+    const f = MAX_IMAGE / big;
+    const off = document.createElement('canvas');
+    off.width = Math.round(img.naturalWidth * f); off.height = Math.round(img.naturalHeight * f);
+    off.getContext('2d').drawImage(img, 0, 0, off.width, off.height);
+    blob = await new Promise(r => off.toBlob(r, 'image/webp', 0.92));
+  }
+  const id = uid() + uid();
+  img = await registerImage(id, blob);
+  if (idb) await dbReq('readwrite', s => s.put(blob, id));
+  return { id, w: img.naturalWidth, h: img.naturalHeight };
+}
+async function insertImages(blobs, at) {
+  if (!blobs.length || !canDraw()) return;
+  if (editing) finishEdit();
+  const target = doc;
+  const added = [];
+  for (const b of blobs) {
+    try {
+      const rec = await addImageBlob(b);
+      const el = makeEl('image', 0, 0);
+      el.imageId = rec.id;
+      // fit a fresh image comfortably in the window, never larger than its real size
+      const f = Math.min(1, (innerWidth * 0.5) / view().zoom / rec.w, (innerHeight * 0.6) / view().zoom / rec.h);
+      el.w = rec.w * f; el.h = rec.h * f;
+      added.push(el);
+    } catch (err) { toast('Een afbeelding kon niet worden gelezen.'); }
+  }
+  if (!added.length || target !== doc) return;
+  const p = at || toWorld(innerWidth / 2, innerHeight / 2);
+  for (const el of added) { el.x = p.x - el.w / 2; el.y = p.y - el.h / 2; el.layer = doc.activeLayer; }
+  doc.elements.push(...added);
+  state.selected = new Set(added.map(e => e.id));
+  if (added.length > 1) {
+    arrangeSelected('pack', true);
+    // a whole batch should still fit in the window
+    const g = groupBounds(added);
+    const fit = Math.min(1, (innerWidth * 0.6) / view().zoom / (g[2] - g[0]), (innerHeight * 0.7) / view().zoom / (g[3] - g[1]));
+    if (fit < 1) for (const el of added) scaleUnit({ list: [el], box: g }, fit, g[0], g[1]);
+    const b = groupBounds(added);
+    const dx = p.x - (b[0] + b[2]) / 2, dy = p.y - (b[1] + b[3]) / 2;
+    for (const el of added) { el.x += dx; el.y += dy; }
+  }
+  if (state.tool !== 'selection') setTool('selection', true);
+  commit(); renderPanel(); render();
+  if (!idb) toast('Let op: deze browser kan afbeeldingen niet bewaren; na herladen zijn ze weg.');
+}
+async function bootImages() {
+  idb = await openDb();
+  if (!idb) return;
+  const used = new Set();
+  for (const c of state.canvases) for (const e of c.elements) if (e.imageId) used.add(e.imageId);
+  const keys = (await dbReq('readonly', s => s.getAllKeys())) || [];
+  for (const k of keys) {
+    if (!used.has(k)) { dbReq('readwrite', s => s.delete(k)); continue; }
+    const blob = await dbReq('readonly', s => s.get(k));
+    if (blob) registerImage(k, blob).catch(() => {});
+  }
+}
+const blobToDataUrl = blob => new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(blob); });
+
 let toastTimer = 0;
 function toast(msg) {
   const t = $('toast');
@@ -311,7 +423,7 @@ function hitRaw(el, x, y, thr, forceFilled) {
   const [x1, y1, x2, y2] = bounds(el);
   if (el.angle) [x, y] = rot(x, y, (x1 + x2) / 2, (y1 + y2) / 2, -el.angle);
   if (x < x1 - thr || x > x2 + thr || y < y1 - thr || y > y2 + thr) return false;
-  if (el.type === 'text' || el.type === 'symbol') return true;
+  if (el.type === 'text' || el.type === 'symbol' || el.type === 'image') return true;
   if (hasPoints(el)) {
     const t = thr + el.strokeWidth / 2;
     const p = el.points;
@@ -843,6 +955,17 @@ function drawEl(c, r, el, labelOnly) {
       c.lineTo(p[p.length - 1][0], p[p.length - 1][1]);
       c.stroke();
     }
+  } else if (el.type === 'image') {
+    const rec = images.get(el.imageId);
+    if (rec) {
+      c.imageSmoothingQuality = 'high';
+      c.drawImage(rec.img, el.x, el.y, el.w, el.h);
+    } else {
+      // still loading, or the pixels are missing (e.g. opened in another browser)
+      c.strokeStyle = '#6a6a78'; c.lineWidth = 1; c.setLineDash([6, 5]);
+      c.strokeRect(el.x, el.y, el.w, el.h);
+      c.beginPath(); c.moveTo(el.x, el.y); c.lineTo(el.x + el.w, el.y + el.h); c.moveTo(el.x + el.w, el.y); c.lineTo(el.x, el.y + el.h); c.stroke();
+    }
   } else if (el.type === 'symbol') {
     c.translate(el.x, el.y);
     if (hasCone(el)) drawCone(c, el);
@@ -1277,7 +1400,7 @@ canvas.addEventListener('pointerdown', e => {
       }
       drag = {
         type: 'resize', handle: h.resize, box: frame.box, frame, orig, targets: snapTargets(state.selected),
-        uniform: sel.some(el => el.type === 'text') || (sel.length > 1 && sel.some(el => el.angle)),
+        uniform: sel.some(el => el.type === 'text' || el.type === 'image') || (sel.length > 1 && sel.some(el => el.angle)),
       };
       return;
     }
@@ -1342,8 +1465,10 @@ canvas.addEventListener('pointerdown', e => {
   renderPanel(); render();
 });
 
+canvas.addEventListener('pointerleave', () => { lastPointer = null; });
 canvas.addEventListener('pointermove', e => {
   const p = pointerPos(e);
+  lastPointer = { x: e.clientX, y: e.clientY };
   if (!drag) { updateCursor(p); return; }
   const d = drag;
   if (d.type === 'pan') {
@@ -1482,7 +1607,8 @@ function eraseAt(p) {
   const thr = 8 / view().zoom;
   const live = liveEls();
   const idx = boolIndex(live);
-  for (const el of live) if (!erasing.has(el.id) && hit(el, p.x, p.y, thr, idx)) erasing.add(el.id);
+  // the eraser leaves images alone, so notes drawn on top of one can be rubbed out
+  for (const el of live) if (el.type !== 'image' && !erasing.has(el.id) && hit(el, p.x, p.y, thr, idx)) erasing.add(el.id);
   render();
 }
 function applyResize(d, p, shift) {
@@ -1614,6 +1740,7 @@ function zoomTo(z, cx = innerWidth / 2, cy = innerHeight / 2) {
 
 // ---------- actions ----------
 function setTool(t, keepSelection) {
+  if (t === 'image') { $('imgInput').click(); return; }
   if (editing) finishEdit();
   state.tool = t;
   if (!keepSelection && t !== 'selection' && t !== 'hand') state.selected.clear();
@@ -1637,6 +1764,107 @@ function duplicateSelected() {
 function copySelected() {
   clipboard = JSON.parse(JSON.stringify(selectedEls()));
   pasteCount = 0;
+  // mark the system clipboard, so an image copied earlier elsewhere is not pasted instead of this
+  try { if (clipboard.length && navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(CLIP_MARK).catch(() => {}); } catch (e) { /* not allowed here */ }
+}
+// paste from the menu: an image on the system clipboard wins, unless the last copy was made in here
+async function pasteAny(at) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.read) {
+      const blobs = [];
+      let marked = false;
+      for (const it of await navigator.clipboard.read()) {
+        if (it.types.includes('text/plain') && (await (await it.getType('text/plain')).text()) === CLIP_MARK) marked = true;
+        const type = it.types.find(t => t.startsWith('image/'));
+        if (type) blobs.push(await it.getType(type));
+      }
+      if (blobs.length && !marked) { insertImages(blobs, at); return; }
+    }
+  } catch (e) { /* no permission or nothing readable: fall back to our own clipboard */ }
+  paste(at);
+}
+let pasteFallback = 0;
+window.addEventListener('paste', e => {
+  if (e.target.matches && e.target.matches('input, textarea')) return;
+  clearTimeout(pasteFallback);
+  e.preventDefault();
+  const cd = e.clipboardData;
+  const files = cd ? [...cd.files].filter(f => f.type.startsWith('image/')) : [];
+  if (files.length && cd.getData('text/plain') !== CLIP_MARK) {
+    insertImages(files, lastPointer ? toWorld(lastPointer.x, lastPointer.y) : null);
+  } else paste();
+});
+for (const type of ['copy', 'cut']) window.addEventListener(type, e => {
+  if ((e.target.matches && e.target.matches('input, textarea')) || !state.selected.size) return;
+  e.preventDefault();
+  e.clipboardData.setData('text/plain', CLIP_MARK);
+});
+
+// ---------- arrange (collections of images) ----------
+// scale a unit (one element or one group) by f and put the top-left of its box at (nx, ny)
+function scaleUnit(u, f, nx, ny) {
+  const [bx, by] = u.box;
+  for (const el of u.list) {
+    if (hasPoints(el)) {
+      el.x = nx + (el.x - bx) * f; el.y = ny + (el.y - by) * f;
+      el.points = el.points.map(p => [p[0] * f, p[1] * f]);
+      continue;
+    }
+    const [cx, cy] = center(el);
+    if (el.type === 'text') { el.fontSize = Math.max(4, el.fontSize * f); fitText(el); }
+    else { el.w *= f; el.h *= f; if (hasCone(el)) el.range *= f; }
+    el.x = nx + (cx - bx) * f - el.w / 2; el.y = ny + (cy - by) * f - el.h / 2;
+  }
+}
+function arrangeSelected(mode, silent) {
+  const W_ = u => u.box[2] - u.box[0], H_ = u => u.box[3] - u.box[1];
+  const units = selUnits().filter(u => W_(u) > 0.5 && H_(u) > 0.5);
+  if (units.length < 2) return;
+  const g = groupBounds(selectedEls());
+  const gap = 12, n = units.length;
+  const area = units.reduce((s, u) => s + W_(u) * H_(u), 0);
+  const avgH = units.reduce((s, u) => s + H_(u), 0) / n, avgW = units.reduce((s, u) => s + W_(u), 0) / n;
+  const cy = u => (u.box[1] + u.box[3]) / 2, cx = u => (u.box[0] + u.box[2]) / 2;
+  // keep the reading order the user already has: top to bottom, then left to right
+  const reading = (a, b) => Math.round(cy(a) / (avgH * 0.7)) - Math.round(cy(b) / (avgH * 0.7)) || cx(a) - cx(b);
+  if (mode === 'row') {
+    units.sort((a, b) => cx(a) - cx(b));
+    let x = g[0];
+    for (const u of units) { const f = avgH / H_(u), w = W_(u) * f; scaleUnit(u, f, x, g[1]); x += w + gap; }
+  } else if (mode === 'column') {
+    units.sort((a, b) => cy(a) - cy(b));
+    let y = g[1];
+    for (const u of units) { const f = avgW / W_(u), h = H_(u) * f; scaleUnit(u, f, g[0], y); y += h + gap; }
+  } else if (mode === 'grid') {
+    units.sort(reading);
+    const cols = Math.ceil(Math.sqrt(n)), s = Math.sqrt(area / n);
+    units.forEach((u, i) => {
+      const f = Math.min(s / W_(u), s / H_(u));
+      const w = W_(u) * f, h = H_(u) * f;
+      scaleUnit(u, f, g[0] + (i % cols) * (s + gap) + (s - w) / 2, g[1] + Math.floor(i / cols) * (s + gap) + (s - h) / 2);
+    });
+  } else {
+    // pack: rows of equal height that all end up exactly as wide as each other
+    units.sort(reading);
+    const asp = u => W_(u) / H_(u);
+    const ht = Math.sqrt(area / units.reduce((s, u) => s + asp(u), 0));
+    const total = Math.max(Math.sqrt(area * 1.6), ...units.map(u => asp(u) * ht));
+    let y = g[1], row = [];
+    const flush = last => {
+      if (!row.length) return;
+      const sum = row.reduce((s, u) => s + asp(u), 0), gaps = gap * (row.length - 1);
+      const h = last && sum * ht + gaps < total * 0.75 ? ht : (total - gaps) / sum;
+      let x = g[0];
+      for (const u of row) { const w = asp(u) * h; scaleUnit(u, h / H_(u), x, y); x += w + gap; }
+      y += h + gap; row = [];
+    };
+    for (const u of units) {
+      row.push(u);
+      if (row.reduce((s, r) => s + asp(r) * ht, 0) + gap * (row.length - 1) >= total) flush(false);
+    }
+    flush(true);
+  }
+  if (!silent) { commit(); renderPanel(); render(); }
 }
 function paste(at) {
   if (!clipboard.length) return;
@@ -1729,7 +1957,8 @@ function renderPanel() {
     `<button data-i="${reg({ k, v: c })}" class="swatch ${c === 'transparent' ? 'none' : ''} ${cur(k) === c ? 'active' : ''}" style="${c === 'transparent' ? '' : 'background:' + c}" title="${c === 'transparent' ? 'Transparant' : c}"></button>`).join('') +
     `<input type="color" data-color="${k}" value="${/^#[0-9a-f]{6}$/i.test(cur(k)) ? cur(k) : '#121212'}" title="Eigen kleur">`;
 
-  let html = row('Lijn', swatches('stroke', STROKES));
+  const onlyImages = sel.length > 0 && sel.every(e => e.type === 'image');
+  let html = onlyImages ? '' : row('Lijn', swatches('stroke', STROKES));
   if (hasShape) {
     html += row('Achtergrond', swatches('bg', BGS));
     if (cur('bg') !== 'transparent') html += row('Invulling', opts('fillStyle', [
@@ -1765,6 +1994,10 @@ function renderPanel() {
           ? `<button data-i="${reg({ act: () => distributeSelected(0) })}" title="Horizontaal verdelen">${ICON.distH}</button>` +
             `<button data-i="${reg({ act: () => distributeSelected(1) })}" title="Verticaal verdelen">${ICON.distV}</button>`
           : ''));
+      const ar = (mode, icon, t) => `<button data-i="${reg({ act: () => arrangeSelected(mode) })}" title="${t}">${ICON[icon]}</button>`;
+      html += row('Rangschikken',
+        ar('pack', 'arPack', 'Netjes inpakken: rijen van gelijke hoogte (Ctrl P)') + ar('row', 'arRow', 'Op een rij, even hoog') +
+        ar('column', 'arCol', 'Onder elkaar, even breed') + ar('grid', 'arGrid', 'In een raster met gelijke vakken'));
     }
     const bt = boolTarget(sel);
     if (bt) html += row('Combineren', BOOL_OPS.map(b =>
@@ -1832,7 +2065,9 @@ canvas.addEventListener('contextmenu', e => {
     add('Knippen', 'Ctrl X', () => { copySelected(); deleteSelected(); });
     add('Kopiëren', 'Ctrl C', copySelected);
   }
-  add('Plakken', 'Ctrl V', () => paste(p), { disabled: !clipboard.length });
+  add('Plakken', 'Ctrl V', () => pasteAny(p));
+  if (!sel.length) add('Afbeelding invoegen…', 'I', () => $('imgInput').click());
+  if (new Set(sel.map(x => x.groupId || x.id)).size > 1) add('Netjes inpakken', 'Ctrl P', () => arrangeSelected('pack'));
   if (sel.length) {
     add('Dupliceren', 'Ctrl D', duplicateSelected);
     if (canGroup(sel) || sel.some(x => x.groupId)) items.push('sep');
@@ -2017,8 +2252,21 @@ $('exportPng').addEventListener('click', () => {
   drawList(c, r, list, false);
   off.toBlob(b => download(b, fileBase() + '.png'));
 });
-$('saveJson').addEventListener('click', () => {
+$('importImg').addEventListener('click', () => $('imgInput').click());
+$('imgInput').addEventListener('change', e => {
+  const files = [...e.target.files].filter(f => f.type.startsWith('image/'));
+  e.target.value = '';
+  $('sidebar').hidden = true;
+  insertImages(files);
+});
+$('saveJson').addEventListener('click', async () => {
   const data = { type: 'id-sketch', version: 1, name: doc.name, layers: doc.layers, elements: els() };
+  // images travel inside the file, so it can be opened on another computer
+  const used = [...new Set(els().map(e => e.imageId).filter(id => id && images.has(id)))];
+  if (used.length) {
+    data.images = {};
+    for (const id of used) data.images[id] = await blobToDataUrl(images.get(id).blob);
+  }
   download(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }), fileBase() + '.idsketch.json');
 });
 $('openJson').addEventListener('click', () => $('fileInput').click());
@@ -2029,6 +2277,12 @@ $('fileInput').addEventListener('change', async e => {
   try {
     const data = JSON.parse(await file.text());
     if (data.type !== 'id-sketch' || !Array.isArray(data.elements)) throw new Error('onbekend formaat');
+    for (const [id, url] of Object.entries(data.images || {})) {
+      if (images.has(id) || typeof url !== 'string' || !url.startsWith('data:image/')) continue;
+      const blob = await (await fetch(url)).blob();
+      await registerImage(id, blob);
+      if (idb) await dbReq('readwrite', s => s.put(blob, id));
+    }
     addCanvas(data.name || file.name.replace(/\..*$/, ''), data.elements, data.layers);
   } catch (err) { alert('Dit bestand kon niet worden geopend: ' + err.message); }
 });
@@ -2227,8 +2481,18 @@ $('libPane').addEventListener('dragstart', e => {
   e.dataTransfer.effectAllowed = 'copy';
 });
 $('libPane').addEventListener('dragend', () => { dragLib = null; });
-canvas.addEventListener('dragover', e => { if (dragLib) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+const dragsFiles = e => e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+// never let the browser navigate away to a dropped file
+window.addEventListener('dragover', e => { if (dragsFiles(e)) e.preventDefault(); });
+window.addEventListener('drop', e => { if (dragsFiles(e)) e.preventDefault(); });
+canvas.addEventListener('dragover', e => { if (dragLib || dragsFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
 canvas.addEventListener('drop', e => {
+  if (dragsFiles(e)) {
+    e.preventDefault();
+    const files = [...e.dataTransfer.files].filter(f => f.type.startsWith('image/'));
+    if (files.length) insertImages(files, toWorld(e.clientX, e.clientY));
+    return;
+  }
   if (!dragLib) return;
   e.preventDefault();
   const item = libItem(dragLib);
@@ -2270,7 +2534,10 @@ window.addEventListener('keydown', e => {
     }
     else if (k === 'c') copySelected();
     else if (k === 'x') { copySelected(); deleteSelected(); }
-    else if (k === 'v') paste();
+    else if (k === 'p') { e.preventDefault(); arrangeSelected('pack'); }
+    // Ctrl+V is handled by the paste event, which also sees images on the system clipboard;
+    // if the browser sends no paste event, fall back to our own clipboard
+    else if (k === 'v') { clearTimeout(pasteFallback); pasteFallback = setTimeout(() => paste(), 150); }
     else if (k === '=' || k === '+') { e.preventDefault(); zoomTo(view().zoom * 1.1); }
     else if (k === '-') { e.preventDefault(); zoomTo(view().zoom / 1.1); }
     else if (k === '0') { e.preventDefault(); zoomTo(1); }
@@ -2313,6 +2580,7 @@ function resize() {
 window.addEventListener('resize', resize);
 renderToolbar();
 load();
+bootImages();
 renderLibrary();
 renderRight();
 renderGridPop();
