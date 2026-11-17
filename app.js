@@ -3,8 +3,8 @@
 
 // ---------- constants ----------
 const STORE_KEY = 'idsketch.v1';
-const BG = '#121212';
-const ACCENT = '#a8a5ff';
+const BG = '#0a0a0a';       // --bg
+const ACCENT = '#fcee93';   // --accent
 const FONT = '"Segoe UI", system-ui, -apple-system, sans-serif';
 const LINE_H = 1.25;
 const STROKES = ['#d3d3d3', '#ff8383', '#3a994c', '#56a2e8', '#b76100'];
@@ -13,7 +13,7 @@ const SHAPES = ['rectangle', 'diamond', 'ellipse'];
 const LINEAR = ['line', 'arrow'];
 
 const svg = (inner, extra = '') =>
-  `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ${extra}>${inner}</svg>`;
+  `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" ${extra}>${inner}</svg>`;
 
 const ICON = {
   menu: svg('<path d="M4 7h16M4 12h16M4 17h16"/>'),
@@ -74,6 +74,10 @@ const ICON = {
   flip: svg('<path d="M12 3v18" stroke-dasharray="2 3"/><path d="M8 7l-5 5 5 5zM16 7l5 5-5 5z"/>'),
   copy: svg('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>'),
   trash: svg('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'),
+  undo: svg('<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>'),
+  redo: svg('<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/>'),
+  minus: svg('<path d="M5 12h14"/>'),
+  plus: svg('<path d="M5 12h14M12 5v14"/>'),
   pencilSm: svg('<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>', 'style="width:14px;height:14px"'),
   trashSm: svg('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>', 'style="width:14px;height:14px"'),
 };
@@ -971,7 +975,7 @@ function drawEl(c, r, el, labelOnly) {
       c.drawImage(rec.img, el.x, el.y, el.w, el.h);
     } else {
       // still loading, or the pixels are missing (e.g. opened in another browser)
-      c.strokeStyle = '#6a6a78'; c.lineWidth = 1; c.setLineDash([6, 5]);
+      c.strokeStyle = '#5a5a5a'; c.lineWidth = 1; c.setLineDash([6, 5]);
       c.strokeRect(el.x, el.y, el.w, el.h);
       c.beginPath(); c.moveTo(el.x, el.y); c.lineTo(el.x + el.w, el.y + el.h); c.moveTo(el.x + el.w, el.y); c.lineTo(el.x, el.y + el.h); c.stroke();
     }
@@ -1017,7 +1021,7 @@ function paint() {
   ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, dpr * zoom * scrollX, dpr * zoom * scrollY);
   drawList(ctx, rc, visEls(), true);
   if (guides.length) {
-    ctx.strokeStyle = '#ff5ca8'; ctx.lineWidth = 1 / zoom; ctx.setLineDash([]);
+    ctx.strokeStyle = ACCENT; ctx.lineWidth = 1 / zoom; ctx.setLineDash([]);
     ctx.beginPath();
     for (const g of guides) { ctx.moveTo(g.x1, g.y1); ctx.lineTo(g.x2, g.y2); }
     ctx.stroke();
@@ -1074,7 +1078,7 @@ function paint() {
   }
   if (drag && drag.type === 'box') {
     const b = drag;
-    ctx.fillStyle = 'rgba(168,165,255,0.12)'; ctx.strokeStyle = ACCENT; ctx.lineWidth = px;
+    ctx.fillStyle = 'rgba(252,238,147,0.10)'; ctx.strokeStyle = ACCENT; ctx.lineWidth = px;
     const x = Math.min(b.start.x, b.cur.x), y = Math.min(b.start.y, b.cur.y);
     const w = Math.abs(b.cur.x - b.start.x), h = Math.abs(b.cur.y - b.start.y);
     ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h);
@@ -1964,7 +1968,7 @@ function renderPanel() {
     `<button data-i="${reg({ k, v: o.v })}" class="${cur(k) === o.v ? 'active' : ''}" title="${o.t}">${o.icon || o.label}</button>`).join('');
   const swatches = (k, list) => list.map(c =>
     `<button data-i="${reg({ k, v: c })}" class="swatch ${c === 'transparent' ? 'none' : ''} ${cur(k) === c ? 'active' : ''}" style="${c === 'transparent' ? '' : 'background:' + c}" title="${c === 'transparent' ? 'Transparant' : c}"></button>`).join('') +
-    `<input type="color" data-color="${k}" value="${/^#[0-9a-f]{6}$/i.test(cur(k)) ? cur(k) : '#121212'}" title="Eigen kleur">`;
+    `<input type="color" data-color="${k}" value="${/^#[0-9a-f]{6}$/i.test(cur(k)) ? cur(k) : BG}" title="Eigen kleur">`;
 
   const onlyImages = sel.length > 0 && sel.every(e => e.type === 'image');
   let html = onlyImages ? '' : row('Lijn', swatches('stroke', STROKES));
@@ -2152,7 +2156,9 @@ function renderGridPop() {
   syncGridBtn();
 }
 $('gridBtn').innerHTML = ICON.grid;
-$('gridBtn').addEventListener('click', () => { $('gridPop').hidden = !$('gridPop').hidden; });
+$('zoomOut').innerHTML = ICON.minus; $('zoomIn').innerHTML = ICON.plus;
+$('undoBtn').innerHTML = ICON.undo; $('redoBtn').innerHTML = ICON.redo;
+$('gridBtn').addEventListener('click', () => { $('gridPop').hidden = !$('gridPop').hidden; $('sidebar').hidden = true; });
 $('gridPop').addEventListener('input', e => {
   const t = e.target;
   if (t.dataset.s) state.snapObjects = t.checked;
