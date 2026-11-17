@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ID Sketch</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="board"></canvas>
+<textarea id="editor" spellcheck="false" hidden></textarea>
+
+<div id="topleft">
+  <button id="menuBtn" class="iconbtn" title="Canvassen en bestand"></button>
+  <span id="docName"></span>
+</div>
+
+<div id="toolbar"></div>
+
+<aside id="panel" hidden></aside>
+
+<aside id="sidebar" hidden>
+  <h2>Canvassen</h2>
+  <ul id="canvasList"></ul>
+  <button id="newCanvas" class="wide primary">+ Nieuw canvas</button>
+  <hr>
+  <button id="exportPng" class="wide">Exporteer als PNG</button>
+  <button id="saveJson" class="wide">Bewaar als bestand</button>
+  <button id="openJson" class="wide">Open bestand…</button>
+  <button id="clearCanvas" class="wide danger">Canvas leegmaken</button>
+  <input id="fileInput" type="file" accept=".json,.idsketch,application/json" hidden>
+</aside>
+
+<button id="rightBtn" class="iconbtn" title="Lagen en bibliotheek"></button>
+<aside id="rightbar" hidden>
+  <div id="rightTabs" class="tabs">
+    <button data-tab="layers">Lagen</button>
+    <button data-tab="lib">Bibliotheek</button>
+  </div>
+  <div id="layersPane">
+    <ul id="layerList"></ul>
+    <button id="newLayer" class="wide primary">+ Nieuwe laag</button>
+    <p>Nieuwe objecten komen op de gekozen laag. Bovenaan in de lijst ligt bovenop.</p>
+  </div>
+  <div id="libPane" hidden></div>
+</aside>
+<div id="toast" hidden></div>
+
+<div id="ctxMenu" hidden></div>
+<div id="gridPop" hidden></div>
+
+<div id="bottomleft">
+  <div class="group">
+    <button id="zoomOut" title="Uitzoomen (Ctrl -)">−</button>
+    <button id="zoomReset" title="Zoom herstellen (Ctrl 0)">100%</button>
+    <button id="zoomIn" title="Inzoomen (Ctrl +)">+</button>
+  </div>
+  <div class="group">
+    <button id="undoBtn" title="Ongedaan maken (Ctrl Z)">↶</button>
+    <button id="redoBtn" title="Opnieuw (Ctrl Shift Z)">↷</button>
+  </div>
+  <div class="group">
+    <button id="gridBtn" title="Raster en snappen"></button>
+  </div>
+</div>
+
+<script src="vendor/rough.js"></script>
+<script src="vendor/polygon-clipping.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
