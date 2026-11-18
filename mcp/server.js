@@ -165,6 +165,7 @@ const GEOMETRY = {
   flip: { type: 'boolean', description: 'Mirror a door so it opens the other way.' },
   layer: { type: 'string', description: 'Layer name; created if it does not exist.' },
   group: { type: 'string', description: 'Elements with the same group value in one call are grouped, so they move as one.' },
+  combine: { type: 'string', enum: ['union', 'subtract', 'intersect', 'exclude'], description: 'add_elements only. Merge the rectangles / ellipses / diamonds of one group into a single shape: union joins them, subtract cuts the later ones out of the first, intersect keeps the overlap, exclude keeps everything but the overlap. Set it on the members together with the same group; the first member gives the style. Use it to build custom shapes such as letters, logos and silhouettes.' },
 };
 const TYPES = ['rectangle', 'ellipse', 'diamond', 'line', 'arrow', 'text', 'wall', 'door', 'window', 'camera', 'light', 'person', 'mark',
   'chair', 'sofa', 'table', 'roundtable', 'bed', 'cabinet', 'plant', 'rug'];

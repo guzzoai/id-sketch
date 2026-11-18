@@ -35,6 +35,11 @@
   <hr>
   <button id="bridgeBtn" class="wide" title="Laat Claude via de MCP-server op dit canvas tekenen"></button>
   <input id="fileInput" type="file" accept=".json,.idsketch,application/json" hidden>
+  <hr>
+  <h2>Thema <span id="themeName" class="val"></span></h2>
+  <div id="themeList" class="chips"></div>
+  <h2>Kleurenpalet <span id="paletteName" class="val"></span></h2>
+  <div id="paletteList" class="chips"></div>
 </aside>
 
 <button id="rightBtn" class="iconbtn" title="Lagen en bibliotheek"></button>
@@ -72,6 +77,6 @@
 
 <script src="vendor/rough.js"></script>
 <script src="vendor/polygon-clipping.js"></script>
-<script src="app.js"></script>
+<script src="app.js?v=2"></script>
 </body>
 </html>

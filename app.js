@@ -3,13 +3,47 @@
 
 // ---------- constants ----------
 const STORE_KEY = 'idsketch.v1';
-const BG = '#0a0a0a';       // --bg
-const ACCENT = '#fcee93';   // --accent
+let BG = '#0a0a0a';         // --bg: the canvas colour of the current theme
+let ACCENT = '#fcee93';     // selection colour on the canvas
+let INK = '255,255,255';    // rgb of the grid
 const FONT = '"Segoe UI", system-ui, -apple-system, sans-serif';
 const LINE_H = 1.25;
 const STROKES = ['#d3d3d3', '#ff8383', '#3a994c', '#56a2e8', '#b76100'];
 const BGS = ['transparent', '#5b2c2c', '#043b0c', '#154163', '#362500'];
 const SHAPES = ['rectangle', 'diamond', 'ellipse'];
+
+// ---------- themes ----------
+// Drawings always store the base palette (STROKES/BGS). A theme only changes how those five slots are shown,
+// so a drawing works in every theme and the palette of the MCP server stays valid. Own colours are shown as they are.
+// bg = canvas, panel = rails, text = text on the rails, accent = active state, sel = selection on the canvas
+// (when the accent does not stand out there), strokes = ink, red, green, blue, orange.
+const THEMES = [
+  { id: 'frames', name: 'Frames', bg: '#0a0a0a', panel: '#19191b', text: '#ededed', accent: '#fcee93', grid: '#ffffff', strokes: STROKES },
+  { id: 'flame', name: 'Flame', bg: '#252422', panel: '#403d39', text: '#fffcf2', accent: '#eb5e28', strokes: ['#ccc5b9', '#eb5e28', '#9aa67c', '#7fa8b8', '#e9b44c'] },
+  { id: 'taxi', name: 'Taxi', bg: '#202020', panel: '#333533', text: '#d6d6d6', accent: '#ffd100', hover: '#ffee32', strokes: ['#d6d6d6', '#ff6b5a', '#7bd389', '#6cb4ee', '#ffd100'] },
+  { id: 'marine', name: 'Marine', bg: '#003049', panel: '#0f405a', text: '#fdf0d5', accent: '#669bbc', strokes: ['#fdf0d5', '#e5383b', '#7fb685', '#669bbc', '#f4a259'] },
+  { id: 'signaal', name: 'Signaal', bg: '#f5dd41', panel: '#212121', text: '#f6f1d8', accent: '#fac402', sel: '#212121', strokes: ['#212121', '#b3261e', '#1f6f43', '#1d4e89', '#646464'] },
+  { id: 'olijf', name: 'Olijf', bg: '#fefae0', panel: '#283618', text: '#fefae0', accent: '#dda15e', sel: '#bc6c25', strokes: ['#283618', '#a63d2f', '#606c38', '#3a6b7e', '#bc6c25'] },
+  { id: 'oxblood', name: 'Oxblood', bg: '#d6d5c9', panel: '#0a100d', text: '#d6d5c9', accent: '#d9534f', sel: '#a22c29', strokes: ['#0a100d', '#a22c29', '#55683f', '#3f5f73', '#b0661f'] },
+  { id: 'tuin', name: 'Tuin', bg: '#fefee3', panel: '#1b4a31', text: '#fefee3', accent: '#ffc9b9', sel: '#2c6e49', strokes: ['#1f3d2b', '#d1603d', '#2c6e49', '#3d7ea6', '#d68c45'] },
+];
+// Colour palettes for the swatches in the style panel. Unlike the theme slots these colours are stored as they are.
+const PALETTES = [
+  { id: 'flame', name: 'Flame', colors: ['#fffcf2', '#ccc5b9', '#403d39', '#252422', '#eb5e28'] },
+  { id: 'oxblood', name: 'Oxblood', colors: ['#0a100d', '#b9baa3', '#d6d5c9', '#a22c29', '#73201c'] },
+  { id: 'taxi', name: 'Taxi', colors: ['#d6d6d6', '#ffee32', '#ffd100', '#202020', '#333533'] },
+  { id: 'signaal', name: 'Signaal', colors: ['#f5dd41', '#fac402', '#646464', '#474747', '#212121'] },
+  { id: 'olijf', name: 'Olijf', colors: ['#606c38', '#283618', '#fefae0', '#dda15e', '#bc6c25'] },
+  { id: 'marine', name: 'Marine', colors: ['#780000', '#c1121f', '#fdf0d5', '#003049', '#669bbc'] },
+  { id: 'tuin', name: 'Tuin', colors: ['#2c6e49', '#4c956c', '#fefee3', '#ffc9b9', '#d68c45'] },
+];
+const THEME_VARS = ['bg', 'panel', 'panel-2', 'field', 'field-hover', 'border', 'border-strong', 'text', 'text-muted', 'text-dim', 'accent', 'accent-hover', 'accent-fg', 'on-bg'];
+const hex2rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+const mix = (a, b, t) => { const y = hex2rgb(b); return '#' + hex2rgb(a).map((v, i) => Math.round(v + (y[i] - v) * t).toString(16).padStart(2, '0')).join(''); };
+const isDark = h => { const [r, g, b] = hex2rgb(h); return r * 0.299 + g * 0.587 + b * 0.114 < 140; };
+let theme = THEMES[0];
+let colorMap = new Map();
+const tc = c => colorMap.get(c) || c;   // a stored colour as the current theme shows it
 const LINEAR = ['line', 'arrow'];
 
 const svg = (inner, extra = '') =>
@@ -82,6 +116,14 @@ const ICON = {
   trashSm: svg('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>', 'style="width:14px;height:14px"'),
 };
 
+const HEAD_ICON = {
+  none: '<path d="M4 12h16"/>',
+  arrow: '<path d="M4 12h16M14 6l6 6-6 6"/>',
+  triangle: '<path d="M4 12h9"/><path d="M20 12l-7-5v10z" fill="currentColor"/>',
+  dot: '<path d="M4 12h10"/><circle cx="17" cy="12" r="3" fill="currentColor"/>',
+  bar: '<path d="M4 12h15M19 6v12"/>',
+};
+const headIcon = (kind, start) => svg(start ? `<g transform="translate(24 0) scale(-1 1)">${HEAD_ICON[kind]}</g>` : HEAD_ICON[kind]);
 const TOOLS = [
   { id: 'hand', title: 'Hand (verschuiven)', key: 'H' },
   { id: 'selection', title: 'Selectie', key: 'V', num: '1' },
@@ -114,9 +156,12 @@ const state = {
   grid: { show: false, type: 'dots', size: 20, opacity: 30, snap: false },
   snapObjects: false,
   right: { open: true, tab: 'layers' },
+  theme: 'frames',
+  palette: '',               // id of a colour palette, or '' for the colours of the theme
   style: {
     stroke: STROKES[0], bg: 'transparent', fillStyle: 'solid', strokeWidth: 2,
     strokeStyle: 'solid', roughness: 1, edges: 'round', opacity: 100, fontSize: 20,
+    headStart: 'none', headEnd: 'arrow',
   },
 };
 let doc = null;            // active canvas
@@ -293,8 +338,11 @@ function load() {
       state.snapObjects = !!data.snapObjects;
       if (data.right) Object.assign(state.right, data.right);
       state.bridge = !!data.bridge;
+      if (data.theme) state.theme = data.theme;
+      if (data.palette) state.palette = data.palette;
     }
   } catch (e) { /* start fresh */ }
+  applyTheme(state.theme);
   if (!state.canvases.length) state.canvases = [newCanvasData('Canvas 1')];
   for (const c of state.canvases) {
     c.elements = c.elements || [];
@@ -312,11 +360,60 @@ function saveNow() {
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify({
       canvases: state.canvases, activeId: state.activeId, style: state.style,
-      grid: state.grid, snapObjects: state.snapObjects, right: state.right, bridge: !!state.bridge,
+      grid: state.grid, snapObjects: state.snapObjects, right: state.right, bridge: !!state.bridge, theme: state.theme, palette: state.palette,
     }));
   } catch (e) { console.warn('Opslaan mislukt', e); }
 }
 window.addEventListener('beforeunload', saveNow);
+
+function applyTheme(id) {
+  const t = theme = THEMES.find(x => x.id === id) || THEMES[0];
+  const base = t === THEMES[0], dark = isDark(t.panel);
+  BG = t.bg; ACCENT = t.sel || t.accent; INK = hex2rgb(t.grid || t.strokes[0]).join(',');
+  colorMap = new Map();
+  if (!base) STROKES.forEach((c, i) => {
+    colorMap.set(c, t.strokes[i]);
+    if (i) colorMap.set(BGS[i], mix(t.strokes[i], isDark(t.bg) ? t.bg : '#ffffff', 0.7));   // fills: a tint of the line colour
+  });
+  // the base theme is what style.css says; the others derive their surfaces from four colours
+  const vars = base ? {} : {
+    bg: t.bg, panel: t.panel, 'panel-2': mix(t.panel, t.text, 0.1),
+    field: mix(t.panel, '#000000', dark ? 0.45 : 0.07), 'field-hover': mix(t.panel, '#000000', dark ? 0.3 : 0.12),
+    border: mix(t.panel, t.text, 0.1), 'border-strong': mix(t.panel, t.text, 0.2),
+    text: t.text, 'text-muted': mix(t.text, t.panel, dark ? 0.4 : 0.28), 'text-dim': mix(t.text, t.panel, dark ? 0.62 : 0.5),
+    accent: t.accent, 'accent-hover': t.hover || mix(t.accent, '#ffffff', 0.25), 'accent-fg': isDark(t.accent) ? '#ffffff' : '#16191f',
+    'on-bg': mix(t.strokes[0], t.bg, 0.35),
+  };
+  const root = document.documentElement.style;
+  for (const k of THEME_VARS) { if (vars[k]) root.setProperty('--' + k, vars[k]); else root.removeProperty('--' + k); }
+  drawCache.clear(); boolCache.clear();
+}
+function setTheme(id) {
+  applyTheme(id);
+  state.theme = theme.id;
+  save(); renderThemes(); renderLibrary(); renderPanel(); render();
+}
+function renderThemes() {
+  $('themeName').textContent = theme.name;
+  $('themeList').innerHTML = THEMES.map(t =>
+    `<button data-theme="${t.id}" class="${t === theme ? 'active' : ''}" title="${t.name}" style="background:linear-gradient(90deg, ${t.panel} 36%, ${t.bg} 36%)"></button>`).join('');
+  const pal = palette();
+  const stripes = list => 'linear-gradient(90deg, ' + list.map((c, i) => `${c} ${i * 20}% ${i * 20 + 20}%`).join(', ') + ')';
+  $('paletteName').textContent = pal ? pal.name : 'Thema';
+  $('paletteList').innerHTML = [{ id: '', name: 'Kleuren van het thema', colors: theme.strokes }, ...PALETTES].map(p =>
+    `<button data-palette="${p.id}" class="${p.id === (pal ? pal.id : '') ? 'active' : ''}" title="${p.name}" style="background:${stripes(p.colors)}"></button>`).join('');
+}
+const palette = () => PALETTES.find(p => p.id === state.palette);
+$('themeList').addEventListener('click', e => {
+  const b = e.target.closest('[data-theme]');
+  if (b) setTheme(b.dataset.theme);
+});
+$('paletteList').addEventListener('click', e => {
+  const b = e.target.closest('[data-palette]');
+  if (!b) return;
+  state.palette = b.dataset.palette;
+  save(); renderThemes(); renderPanel();
+});
 
 function newCanvasData(name) {
   const c = { id: uid(), name, elements: [], view: { scrollX: 0, scrollY: 0, zoom: 1 } };
@@ -365,11 +462,24 @@ function stepHistory(from, to) {
 const toWorld = (cx, cy) => ({ x: cx / view().zoom - view().scrollX, y: cy / view().zoom - view().scrollY });
 const toScreen = (x, y) => ({ x: (x + view().scrollX) * view().zoom, y: (y + view().scrollY) * view().zoom });
 const hasPoints = el => el.type === 'line' || el.type === 'arrow' || el.type === 'draw';
+// A line or arrow with three points is curved: start, the point the curve passes through, end.
+const isCurved = el => LINEAR.includes(el.type) && el.points.length === 3;
+const curveCtrl = p => [2 * p[1][0] - (p[0][0] + p[2][0]) / 2, 2 * p[1][1] - (p[0][1] + p[2][1]) / 2];
+function curvePoly(p, n = 20) {
+  const [a, , b] = p, c = curveCtrl(p), out = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n, u = 1 - t;
+    out.push([u * u * a[0] + 2 * u * t * c[0] + t * t * b[0], u * u * a[1] + 2 * u * t * c[1] + t * t * b[1]]);
+  }
+  return out;
+}
+const HEADS = [['none', 'Geen'], ['arrow', 'Pijl'], ['triangle', 'Driehoek'], ['dot', 'Bol'], ['bar', 'Streep']];
+const headOf = (el, end) => el[end ? 'headEnd' : 'headStart'] || (end && el.type === 'arrow' ? 'arrow' : 'none');
 
 function bounds(el) {
   if (hasPoints(el)) {
     let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
-    for (const p of el.points) {
+    for (const p of isCurved(el) ? curvePoly(el.points) : el.points) {
       if (p[0] < x1) x1 = p[0]; if (p[0] > x2) x2 = p[0];
       if (p[1] < y1) y1 = p[1]; if (p[1] > y2) y2 = p[1];
     }
@@ -431,7 +541,7 @@ function hitRaw(el, x, y, thr, forceFilled) {
   if (el.type === 'text' || el.type === 'symbol' || el.type === 'image') return true;
   if (hasPoints(el)) {
     const t = thr + el.strokeWidth / 2;
-    const p = el.points;
+    const p = isCurved(el) ? curvePoly(el.points) : el.points;
     if (p.length === 1) return Math.hypot(x - el.x - p[0][0], y - el.y - p[0][1]) <= t;
     for (let i = 1; i < p.length; i++) {
       if (distSeg(x, y, el.x + p[i - 1][0], el.y + p[i - 1][1], el.x + p[i][0], el.y + p[i][1]) <= t) return true;
@@ -645,13 +755,13 @@ function drawBool(c, r, g, ghost) {
   if (geo.empty) {
     // nothing is left of the shapes: show faint outlines on screen so the combination can still be found and fixed
     if (ghost) {
-      c.globalAlpha *= 0.45; c.strokeStyle = b.stroke; c.lineWidth = 1; c.setLineDash([4, 4]);
+      c.globalAlpha *= 0.45; c.strokeStyle = tc(b.stroke); c.lineWidth = 1; c.setLineDash([4, 4]);
       for (const p of geo.memberPaths) c.stroke(p);
     }
   } else {
     if (b.bg !== 'transparent') {
       if (geo.fill) r.draw(geo.fill);
-      else { c.fillStyle = b.bg; c.fill(geo.path, 'evenodd'); }
+      else { c.fillStyle = tc(b.bg); c.fill(geo.path, 'evenodd'); }
     }
     for (const d of geo.outline) r.draw(d);
   }
@@ -750,7 +860,7 @@ function polyPath(pts, r) {
 }
 function roughOpts(el) {
   const o = {
-    seed: el.seed, roughness: el.roughness, stroke: el.stroke,
+    seed: el.seed, roughness: el.roughness, stroke: tc(el.stroke),
     strokeWidth: el.strokeStyle === 'solid' ? el.strokeWidth : el.strokeWidth + 0.5,
     preserveVertices: el.roughness < 2,
   };
@@ -758,14 +868,14 @@ function roughOpts(el) {
   if (el.strokeStyle === 'dotted') o.strokeLineDash = [1.5, 6 + el.strokeWidth];
   if (el.strokeStyle !== 'solid') o.disableMultiStroke = true;
   if (isBoxy(el) && el.bg !== 'transparent') {
-    o.fill = el.bg; o.fillStyle = el.fillStyle;
+    o.fill = tc(el.bg); o.fillStyle = el.fillStyle;
     o.fillWeight = el.strokeWidth / 2; o.hachureGap = el.strokeWidth * 4;
   }
   return o;
 }
 function drawables(el) {
   const sig = [el.type, el.w, el.h, el.stroke, el.bg, el.fillStyle, el.strokeWidth, el.strokeStyle,
-    el.roughness, el.edges, el.seed, el.points ? el.points.join(';') : ''].join('|');
+    el.roughness, el.edges, el.seed, el.headStart, el.headEnd, el.points ? el.points.join(';') : ''].join('|');
   const c = drawCache.get(el.id);
   if (c && c.sig === sig) return c.list;
   const o = roughOpts(el);
@@ -781,15 +891,25 @@ function drawables(el) {
     list = [gen.ellipse(w / 2, h / 2, w, h, o)];
   } else if (LINEAR.includes(el.type)) {
     const [a, b] = [el.points[0], el.points[el.points.length - 1]];
-    list = [gen.line(a[0], a[1], b[0], b[1], o)];
+    let ca = b, cb = a;                                  // where each end "comes from": sets the direction of its head
+    if (isCurved(el)) {
+      const c = curveCtrl(el.points);
+      list = [gen.path(`M${a[0]} ${a[1]} Q${c[0]} ${c[1]} ${b[0]} ${b[1]}`, o)];
+      if (Math.hypot(c[0] - a[0], c[1] - a[1]) > 1) ca = c;
+      if (Math.hypot(c[0] - b[0], c[1] - b[1]) > 1) cb = c;
+    } else list = [gen.line(a[0], a[1], b[0], b[1], o)];
     if (el.type === 'arrow') {
       const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
       const size = Math.min(14 + el.strokeWidth * 4, len / 2);
-      const ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
       const ho = Object.assign({}, o, { strokeLineDash: undefined, strokeWidth: el.strokeWidth });
-      for (const s of [-1, 1]) {
-        const t = ang + Math.PI + s * 0.44;
-        list.push(gen.line(b[0], b[1], b[0] + Math.cos(t) * size, b[1] + Math.sin(t) * size, ho));
+      const full = Object.assign({}, ho, { fill: o.stroke, fillStyle: 'solid' });
+      for (const [tip, from, kind] of [[a, ca, headOf(el, false)], [b, cb, headOf(el, true)]]) {
+        const back = Math.atan2(from[1] - tip[1], from[0] - tip[0]);
+        const at = (t, r) => [tip[0] + Math.cos(t) * r, tip[1] + Math.sin(t) * r];
+        if (kind === 'arrow') for (const sgn of [-1, 1]) list.push(gen.line(tip[0], tip[1], ...at(back + sgn * 0.44, size), ho));
+        else if (kind === 'triangle') list.push(gen.polygon([tip, at(back + 0.4, size), at(back - 0.4, size)], full));
+        else if (kind === 'dot') list.push(gen.circle(tip[0], tip[1], Math.min(size * 0.6, 6 + el.strokeWidth * 3), full));
+        else if (kind === 'bar') list.push(gen.line(...at(back + Math.PI / 2, size * 0.5), ...at(back - Math.PI / 2, size * 0.5), ho));
       }
     }
   }
@@ -890,8 +1010,8 @@ function drawCone(c, el) {
   c.moveTo(ax, ay);
   c.arc(ax, ay, el.range, -Math.PI / 2 - half, -Math.PI / 2 + half);
   c.closePath();
-  c.fillStyle = el.stroke; c.globalAlpha = alpha * 0.12; c.fill();
-  c.strokeStyle = el.stroke; c.globalAlpha = alpha * 0.75; c.lineWidth = 1.2; c.setLineDash([7, 5]); c.stroke();
+  c.fillStyle = tc(el.stroke); c.globalAlpha = alpha * 0.12; c.fill();
+  c.strokeStyle = tc(el.stroke); c.globalAlpha = alpha * 0.75; c.lineWidth = 1.2; c.setLineDash([7, 5]); c.stroke();
   c.beginPath(); c.moveTo(ax, ay); c.lineTo(ax, ay - el.range);
   c.globalAlpha = alpha * 0.3; c.stroke();
   c.setLineDash([]); c.globalAlpha = alpha;
@@ -909,7 +1029,19 @@ function conePoints(el) {
   return pts;
 }
 function visualBounds(list) {
-  let [x1, y1, x2, y2] = groupBounds(list);
+  // a combination is as large as its outcome, not as the shapes it is made of (a cutter can stick out far)
+  const idx = boolIndex(list), seen = new Set(), loose = [], boxes = [];
+  for (const el of list) {
+    const g = boolOf(idx, el);
+    if (!g) { loose.push(el); continue; }
+    if (seen.has(g.id)) continue;
+    seen.add(g.id);
+    const geo = boolGeo(g);
+    if (geo.error || geo.empty) { loose.push(...g.members); continue; }
+    for (const ring of geo.rings) for (const p of ring) boxes.push([g.base.x + p[0], g.base.y + p[1]]);
+  }
+  let [x1, y1, x2, y2] = groupBounds(loose);
+  for (const p of boxes) { x1 = Math.min(x1, p[0]); y1 = Math.min(y1, p[1]); x2 = Math.max(x2, p[0]); y2 = Math.max(y2, p[1]); }
   for (const el of list) if (hasCone(el)) for (const p of conePoints(el)) {
     x1 = Math.min(x1, p[0]); y1 = Math.min(y1, p[1]); x2 = Math.max(x2, p[0]); y2 = Math.max(y2, p[1]);
   }
@@ -949,10 +1081,10 @@ function drawEl(c, r, el, labelOnly) {
     c.translate(cx, cy); c.rotate(el.angle); c.translate(-cx, -cy);
   }
   if (el.type === 'text') {
-    if (!isEditing) drawTextLines(c, el.text, el.fontSize, el.stroke, el.x, el.y, 'left');
+    if (!isEditing) drawTextLines(c, el.text, el.fontSize, tc(el.stroke), el.x, el.y, 'left');
   } else if (el.type === 'draw') {
     const p = el.points;
-    c.strokeStyle = el.stroke; c.fillStyle = el.stroke;
+    c.strokeStyle = c.fillStyle = tc(el.stroke);
     c.lineWidth = el.strokeWidth * 1.6; c.lineCap = 'round'; c.lineJoin = 'round';
     c.translate(el.x, el.y);
     c.beginPath();
@@ -975,7 +1107,7 @@ function drawEl(c, r, el, labelOnly) {
       c.drawImage(rec.img, el.x, el.y, el.w, el.h);
     } else {
       // still loading, or the pixels are missing (e.g. opened in another browser)
-      c.strokeStyle = '#5a5a5a'; c.lineWidth = 1; c.setLineDash([6, 5]);
+      c.strokeStyle = `rgba(${INK},0.4)`; c.lineWidth = 1; c.setLineDash([6, 5]);
       c.strokeRect(el.x, el.y, el.w, el.h);
       c.beginPath(); c.moveTo(el.x, el.y); c.lineTo(el.x + el.w, el.y + el.h); c.moveTo(el.x + el.w, el.y); c.lineTo(el.x, el.y + el.h); c.stroke();
     }
@@ -991,7 +1123,7 @@ function drawEl(c, r, el, labelOnly) {
       c.globalAlpha = alpha;
       const m = measure(el.text, el.fontSize);
       const [lx, ly] = labelCenter(el, m);
-      drawTextLines(c, el.text, el.fontSize, el.textColor || el.stroke, lx, ly - m.h / 2, 'center');
+      drawTextLines(c, el.text, el.fontSize, tc(el.textColor || el.stroke), lx, ly - m.h / 2, 'center');
     }
   } else {
     if (SHAPES.includes(el.type) && (el.w < 0.5 || el.h < 0.5)) { c.restore(); return; }
@@ -999,7 +1131,7 @@ function drawEl(c, r, el, labelOnly) {
     if (!labelOnly) for (const d of drawables(el)) r.draw(d);
     if (el.text && !isEditing) {
       const m = measure(el.text, el.fontSize);
-      drawTextLines(c, el.text, el.fontSize, el.textColor || el.stroke, el.w / 2, el.h / 2 - m.h / 2, 'center');
+      drawTextLines(c, el.text, el.fontSize, tc(el.textColor || el.stroke), el.w / 2, el.h / 2 - m.h / 2, 'center');
     }
   }
   c.restore();
@@ -1035,6 +1167,8 @@ function paint() {
     const pad = 4 * px;
     if (sel.length === 1 && LINEAR.includes(sel[0].type)) {
       for (const p of endpointHandles(sel[0])) drawHandle(p.x, p.y, true);
+      const m = midHandle(sel[0]);
+      drawHandle(m.x, m.y, true, isCurved(sel[0]));
     } else {
       const idx = boolIndex(els());
       for (const el of sel) {
@@ -1078,15 +1212,16 @@ function paint() {
   }
   if (drag && drag.type === 'box') {
     const b = drag;
-    ctx.fillStyle = 'rgba(252,238,147,0.10)'; ctx.strokeStyle = ACCENT; ctx.lineWidth = px;
+    ctx.fillStyle = ctx.strokeStyle = ACCENT; ctx.lineWidth = px;
     const x = Math.min(b.start.x, b.cur.x), y = Math.min(b.start.y, b.cur.y);
     const w = Math.abs(b.cur.x - b.start.x), h = Math.abs(b.cur.y - b.start.y);
-    ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h);
+    ctx.globalAlpha = 0.1; ctx.fillRect(x, y, w, h);
+    ctx.globalAlpha = 1; ctx.strokeRect(x, y, w, h);
   }
 }
-function drawHandle(x, y, roundHandle) {
+function drawHandle(x, y, roundHandle, filled) {
   const s = 8 / view().zoom;
-  ctx.fillStyle = BG; ctx.strokeStyle = ACCENT; ctx.lineWidth = 1 / view().zoom;
+  ctx.fillStyle = filled ? ACCENT : BG; ctx.strokeStyle = ACCENT; ctx.lineWidth = 1 / view().zoom;
   ctx.beginPath();
   if (roundHandle) ctx.arc(x, y, s / 2 + 1 / view().zoom, 0, Math.PI * 2);
   else ctx.rect(x - s / 2, y - s / 2, s, s);
@@ -1145,13 +1280,13 @@ function paintGrid(dpr) {
   const sx = i => (i * ws + scrollX) * zoom * dpr, sy = j => (j * ws + scrollY) * zoom * dpr;
   if (g.type === 'dots') {
     const r = Math.max(1, Math.round(1.5 * dpr));
-    ctx.fillStyle = `rgba(255,255,255,${a})`;
+    ctx.fillStyle = `rgba(${INK},${a})`;
     for (let i = i0; sx(i) <= W; i++) for (let j = j0; sy(j) <= H; j++) ctx.fillRect(Math.round(sx(i) - r / 2), Math.round(sy(j) - r / 2), r, r);
     return;
   }
   ctx.lineWidth = 1;
   for (const major of [false, true]) {
-    ctx.strokeStyle = `rgba(255,255,255,${major ? a : a * 0.4})`;
+    ctx.strokeStyle = `rgba(${INK},${major ? a : a * 0.4})`;
     ctx.beginPath();
     for (let i = i0; sx(i) <= W; i++) if ((i % 5 === 0) === major) { const x = Math.round(sx(i)) + 0.5; ctx.moveTo(x, 0); ctx.lineTo(x, H); }
     for (let j = j0; sy(j) <= H; j++) if ((j % 5 === 0) === major) { const y = Math.round(sy(j)) + 0.5; ctx.moveTo(0, y); ctx.lineTo(W, y); }
@@ -1253,12 +1388,20 @@ function endpointHandles(el) {
     { i: last, x: el.x + el.points[last][0], y: el.y + el.points[last][1] },
   ];
 }
+// the handle in the middle of a line or arrow: drag it to bend the line
+function midHandle(el) {
+  const p = el.points, a = p[0], b = p[p.length - 1];
+  const m = p.length === 3 ? p[1] : [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  return { x: el.x + m[0], y: el.y + m[1] };
+}
 function handleAt(p) {
   const sel = selectedEls();
   if (!sel.length) return null;
   const t = 7 / view().zoom;
   if (sel.length === 1 && LINEAR.includes(sel[0].type)) {
     for (const h of endpointHandles(sel[0])) if (Math.abs(p.x - h.x) <= t && Math.abs(p.y - h.y) <= t) return { endpoint: h.i };
+    const m = midHandle(sel[0]);
+    if (Math.abs(p.x - m.x) <= t && Math.abs(p.y - m.y) <= t) return { mid: true };
     return null;
   }
   for (const h of resizeHandles(sel)) if (Math.abs(p.x - h.x) <= t && Math.abs(p.y - h.y) <= t) return { resize: h.id };
@@ -1274,6 +1417,7 @@ function makeEl(type, x, y) {
     strokeStyle: s.strokeStyle, roughness: s.roughness, edges: s.edges, opacity: s.opacity, fontSize: s.fontSize,
   };
   if (hasPoints({ type })) el.points = [[0, 0]];
+  if (type === 'arrow') { el.headStart = s.headStart || 'none'; el.headEnd = s.headEnd || 'arrow'; }
   return el;
 }
 function cloneEls(list, dx, dy) {
@@ -1350,7 +1494,7 @@ function layoutEditor() {
   editor.style.fontSize = el.fontSize * z + 'px';
   editor.style.transformOrigin = el.type === 'text' ? `${m.w * z / 2}px ${m.h * z / 2}px` : 'center';
   editor.style.transform = el.angle && el.type !== 'symbol' ? `rotate(${el.angle}rad)` : 'none';
-  const textColor = el.type === 'text' ? el.stroke : el.textColor || el.stroke;
+  const textColor = tc(el.type === 'text' ? el.stroke : el.textColor || el.stroke);
   editor.style.color = textColor;
   editor.style.caretColor = textColor;
 }
@@ -1398,9 +1542,11 @@ canvas.addEventListener('pointerdown', e => {
     const h = handleAt(p);
     if (h && h.endpoint !== undefined) {
       const el = selectedEls()[0];
-      drag = { type: 'endpoint', el, i: h.endpoint, other: h.endpoint === 0 ? el.points.length - 1 : 0, targets: snapTargets(state.selected) };
+      drag = { type: 'endpoint', el, i: h.endpoint, other: h.endpoint === 0 ? el.points.length - 1 : 0, targets: snapTargets(state.selected),
+        from: el.points[h.endpoint].slice(), mid0: isCurved(el) ? el.points[1].slice() : null };
       return;
     }
+    if (h && h.mid) { drag = { type: 'mid', el: selectedEls()[0] }; return; }
     if (h) {
       const sel = selectedEls();
       const frame = selFrame(sel);
@@ -1534,6 +1680,24 @@ canvas.addEventListener('pointermove', e => {
       nx = o[0] + sx; ny = o[1] + sy;
     }
     el.points[d.i] = [nx, ny];
+    if (d.mid0) {
+      // the bend turns and scales along with the dragged end, so the curve keeps its shape
+      const o = el.points[d.other];
+      const l0 = Math.hypot(d.from[0] - o[0], d.from[1] - o[1]);
+      if (l0 > 0.01) {
+        const k = Math.hypot(nx - o[0], ny - o[1]) / l0;
+        const r = Math.atan2(ny - o[1], nx - o[0]) - Math.atan2(d.from[1] - o[1], d.from[0] - o[0]);
+        const mx = d.mid0[0] - o[0], my = d.mid0[1] - o[1];
+        el.points[1] = [o[0] + (mx * Math.cos(r) - my * Math.sin(r)) * k, o[1] + (mx * Math.sin(r) + my * Math.cos(r)) * k];
+      }
+    }
+    d.moved = true;
+  } else if (d.type === 'mid') {
+    const el = d.el, a = el.points[0], b = el.points[el.points.length - 1];
+    const m = [p.x - el.x, p.y - el.y];
+    // close to the middle of the straight line: straight again
+    const straight = Math.hypot(m[0] - (a[0] + b[0]) / 2, m[1] - (a[1] + b[1]) / 2) * view().zoom < 6;
+    el.points = straight ? [a, b] : [a, m, b];
     d.moved = true;
   } else if (d.type === 'resize') {
     applyResize(d, d.frame.angle ? p : snapPoint(p, e, d.targets), e.shiftKey);
@@ -1680,7 +1844,7 @@ function updateCursor(p) {
   else if (t !== 'selection') c = 'crosshair';
   else {
     const h = handleAt(p);
-    if (h && h.endpoint !== undefined) c = 'pointer';
+    if (h && (h.endpoint !== undefined || h.mid)) c = 'pointer';
     else if (h) c = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize' }[h.resize] || 'grab';
     else if (elementAt(p.x, p.y)) c = 'move';
   }
@@ -1916,6 +2080,7 @@ function setProp(key, val, final = true) {
   for (const el of targets) {
     if (key === 'textColor' && !isBoxy(el)) continue;
     if (coneKey && !hasCone(el)) continue;
+    if ((key === 'headStart' || key === 'headEnd') && el.type !== 'arrow') continue;
     el[key] = val;
     if (key === 'fontSize' && el.type === 'text') fitText(el);
   }
@@ -1957,6 +2122,10 @@ function renderPanel() {
   const cur = k => {
     if (k === 'textColor') return labelEl.textColor || labelEl.stroke;
     if (k === 'fov' || k === 'range') return coneEl[k];
+    if (k === 'headStart' || k === 'headEnd') {
+      const a = sel.find(e => e.type === 'arrow');
+      return a ? headOf(a, k === 'headEnd') : state.style[k] || (k === 'headEnd' ? 'arrow' : 'none');
+    }
     return sel.length ? sel[0][k] : state.style[k];
   };
   const hasShape = any([...SHAPES, 'symbol']), hasLinear = any(LINEAR), hasDraw = types.has('draw');
@@ -1967,13 +2136,15 @@ function renderPanel() {
   const opts = (k, list) => list.map(o =>
     `<button data-i="${reg({ k, v: o.v })}" class="${cur(k) === o.v ? 'active' : ''}" title="${o.t}">${o.icon || o.label}</button>`).join('');
   const swatches = (k, list) => list.map(c =>
-    `<button data-i="${reg({ k, v: c })}" class="swatch ${c === 'transparent' ? 'none' : ''} ${cur(k) === c ? 'active' : ''}" style="${c === 'transparent' ? '' : 'background:' + c}" title="${c === 'transparent' ? 'Transparant' : c}"></button>`).join('') +
-    `<input type="color" data-color="${k}" value="${/^#[0-9a-f]{6}$/i.test(cur(k)) ? cur(k) : BG}" title="Eigen kleur">`;
+    `<button data-i="${reg({ k, v: c })}" class="swatch ${c === 'transparent' ? 'none' : ''} ${cur(k) === c ? 'active' : ''}" style="${c === 'transparent' ? '' : 'background:' + tc(c)}" title="${c === 'transparent' ? 'Transparant' : tc(c)}"></button>`).join('') +
+    `<input type="color" data-color="${k}" value="${/^#[0-9a-f]{6}$/i.test(cur(k)) ? tc(cur(k)) : BG}" title="Eigen kleur">`;
 
   const onlyImages = sel.length > 0 && sel.every(e => e.type === 'image');
-  let html = onlyImages ? '' : row('Lijn', swatches('stroke', STROKES));
+  const pal = palette();
+  const inks = pal ? pal.colors : STROKES, fills = pal ? ['transparent', ...pal.colors] : BGS;
+  let html = onlyImages ? '' : row('Lijn', swatches('stroke', inks));
   if (hasShape) {
-    html += row('Achtergrond', swatches('bg', BGS));
+    html += row('Achtergrond', swatches('bg', fills));
     if (cur('bg') !== 'transparent') html += row('Invulling', opts('fillStyle', [
       { v: 'hachure', icon: ICON.hachure, t: 'Arcering' }, { v: 'cross-hatch', icon: ICON.cross, t: 'Kruisarcering' }, { v: 'solid', icon: ICON.solid, t: 'Effen' }]));
   }
@@ -1985,11 +2156,16 @@ function renderPanel() {
     html += row('Slordigheid', opts('roughness', [
       { v: 0, icon: ICON.r0, t: 'Architect' }, { v: 1, icon: ICON.r1, t: 'Kunstenaar' }, { v: 2, icon: ICON.r2, t: 'Cartoonist' }]));
   }
+  if (types.has('arrow')) {
+    const heads = start => HEADS.map(([v, t]) => ({ v, t, icon: headIcon(v, start) }));
+    html += row('Pijlpunt begin', opts('headStart', heads(true)));
+    html += row('Pijlpunt einde', opts('headEnd', heads(false)));
+  }
   if (any(['rectangle', 'diamond'])) html += row('Randen', opts('edges', [
     { v: 'sharp', icon: ICON.sharp, t: 'Scherp' }, { v: 'round', icon: ICON.round, t: 'Rond' }]));
   if (hasText) html += row('Lettergrootte', opts('fontSize', [
     { v: 16, label: 'S', t: 'Klein' }, { v: 20, label: 'M', t: 'Normaal' }, { v: 28, label: 'L', t: 'Groot' }, { v: 36, label: 'XL', t: 'Extra groot' }]));
-  if (labelEl) html += row('Tekstkleur', swatches('textColor', STROKES));
+  if (labelEl) html += row('Tekstkleur', swatches('textColor', inks));
   if (coneEl && !editing) {
     const what = coneEl.kind === 'camera' ? 'Kijkhoek' : 'Lichtbundel';
     html += `<h3>${what} <span class="val">${cur('fov')}°</span></h3><input type="range" min="5" max="170" step="5" value="${cur('fov')}" data-range="fov"><div class="scale"><span>smal</span><span>breed</span></div>`;
@@ -2467,7 +2643,8 @@ function libPreview(item) {
   off.width = W * s; off.height = H * s;
   const c = off.getContext('2d');
   const el = libElement(item);
-  if (!item.props.stroke) el.stroke = '#d3d3d3';
+  // the thumbnail sits on a rail, not on the canvas: use the text colour of the rail there
+  if (!item.props.stroke) el.stroke = theme === THEMES[0] ? '#d3d3d3' : theme.text;
   // thumbnails ignore the current style settings: always a plain outline (a wall stays solid)
   el.bg = item.props.wall ? el.stroke : 'transparent';
   el.fillStyle = 'solid'; el.strokeStyle = 'solid'; el.opacity = 100;
@@ -2655,6 +2832,21 @@ function bridgeExec(tool, a) {
       if (s.group) { if (!groups.has(s.group)) groups.set(s.group, uid()); el.groupId = groups.get(s.group); }
       return el;
     });
+    // shapes of one group with "combine" become one shape combination; the first one is the base
+    const combos = new Map();
+    a.elements.forEach((s, i) => {
+      if (!s.combine) return;
+      if (!BOOL_OPS.some(b => b.op === s.combine)) throw new Error(`element ${i}: combine moet union, subtract, intersect of exclude zijn`);
+      if (!s.group) throw new Error(`element ${i}: combine heeft een group nodig`);
+      if (!combos.has(s.group)) combos.set(s.group, s.combine);
+    });
+    for (const [name, op] of combos) {
+      const members = made.filter((el, i) => a.elements[i].group === name);
+      const bad = members.find(el => !SHAPES.includes(el.type));
+      if (bad) throw new Error(`groep "${name}": alleen rectangle, ellipse en diamond kunnen gecombineerd worden`);
+      if (members.length < 2) throw new Error(`groep "${name}": een combinatie heeft minstens twee vormen nodig`);
+      for (const el of members) { el.bool = op; el.boolId = el.groupId; }
+    }
     // only now that every element is valid: create missing layers and place the elements
     made.forEach((el, i) => { el.layer = bridgeLayer(a.elements[i].layer || a.layer); });
     let cams = els().filter(x => x.kind === 'camera').length;
@@ -2677,7 +2869,7 @@ function bridgeExec(tool, a) {
         const b = el.points[el.points.length - 1];
         const p = { x1: el.x, y1: el.y, x2: el.x + b[0], y2: el.y + b[1] };
         for (const k of Object.keys(p)) if (s[k] !== undefined) p[k] = num(s[k], k);
-        el.x = p.x1; el.y = p.y1; el.points = [[0, 0], [p.x2 - p.x1, p.y2 - p.y1]];
+        if (Object.keys(p).some(k => s[k] !== undefined)) { el.x = p.x1; el.y = p.y1; el.points = [[0, 0], [p.x2 - p.x1, p.y2 - p.y1]]; }
         bridgeStyle(el, s);
       } else if (el.type === 'draw') {
         bridgeStyle(el, s);
@@ -2859,6 +3051,7 @@ bootImages();
 renderBridge();
 bridgeConnect();
 renderLibrary();
+renderThemes();
 renderRight();
 renderGridPop();
 resize();
