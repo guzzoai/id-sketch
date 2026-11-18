@@ -75,17 +75,23 @@ kbd, .key, .val, .count, #zoomReset, input[type=number] { font-family: var(--mon
   padding: 12px; background: var(--panel); border-radius: 8px; z-index: 20;
 }
 #panel { left: var(--pad); width: 228px; max-height: calc(100vh - 136px); }
-#rightbar { right: var(--pad); width: 244px; max-height: calc(100vh - 80px); }
+#rightbar { right: var(--pad); width: 244px; max-height: calc(100vh - 136px); }
 #rightBtn { position: fixed; top: var(--pad); right: var(--pad); z-index: 30; }
 
 /* section labels: 11px uppercase muted */
-#panel h3, #rightbar h3, #sidebar h2 {
+#panel h3, #rightbar h3, #sidebar h2, #bgPop h3 {
   margin: 14px 0 6px; font-size: 11px; line-height: 1.4; font-weight: 400; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted);
 }
-#panel h3:first-child, #rightbar h3:first-child, #sidebar h2 { margin-top: 0; }
+#panel h3:first-child, #rightbar h3:first-child, #sidebar h2, #bgPop h3 { margin-top: 0; }
 #panel h3 .val { color: var(--text); margin-left: 4px; letter-spacing: 0; }
 #panel .row { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
 #panel .row button { width: 32px; height: 32px; display: grid; place-items: center; }
+#panel .row.pal + .row.pal { margin-top: 4px; }
+#panel .row.pal input[type=color] { margin-left: 0; }
+#panel .row .mini { width: 24px; height: 24px; background: transparent; }
+#panel .row .mini:hover { background: var(--field); }
+#panel .row.pal .mini:first-of-type, #panel .row.pal .swatch + .mini, #panel .row.pal input + .mini { margin-left: auto; }
+#panel .row .mini svg { width: 14px; height: 14px; }
 .swatch { width: 24px !important; height: 24px !important; border-radius: 4px; padding: 0; }
 .swatch.active { outline: 1px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 2px; }
 .swatch.none { background: linear-gradient(135deg, transparent 46%, var(--text-dim) 46%, var(--text-dim) 54%, transparent 54%), var(--field); }
@@ -150,6 +156,7 @@ input[type=range] { width: 100%; accent-color: var(--text-muted); }
 .chips { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 3px; }
 .chips button { height: 30px; padding: 0; box-shadow: inset 0 0 0 1px var(--border-strong); }
 .chips button.active { outline: 1px solid var(--accent); outline-offset: 2px; }
+.chips button[data-add] { display: grid; place-items: center; box-shadow: none; }
 #canvasList li:hover, #canvasList li.active { background: var(--panel); color: var(--text); }
 #canvasList li button { display: none; }
 #canvasList li:hover button { display: grid; }
@@ -178,6 +185,31 @@ input[type=range] { width: 100%; accent-color: var(--text-muted); }
 #gridPop p { margin: 8px 0 0; color: var(--text-dim); font-size: 11px; line-height: 1.4; }
 
 /* ---------- bottom ---------- */
+/* own palette: a small dialog in the middle */
+#palPop { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 70; width: 340px; padding: 16px; background: var(--panel-2); border-radius: 10px; box-shadow: 0 16px 48px rgba(0, 0, 0, .35); }
+#palPop h3 { margin: 0 0 12px; font-size: 13px; font-weight: 500; color: var(--text); }
+#palPop label { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+#palPop label span { font-size: 11px; color: var(--text-muted); }
+#palPop input { height: 36px; font: inherit; color: var(--text); background: var(--field); border: 0; border-radius: 6px; padding: 0 10px; outline: 0; }
+#palPop input:focus { outline: 1px solid var(--border-strong); }
+#palPop input::placeholder { color: var(--text-dim); }
+#palPreview { display: flex; height: 40px; margin-top: 10px; border-radius: 6px; overflow: hidden; background: var(--field); }
+#palPreview i { flex: 1; }
+#palPreview span { margin: auto; font-size: 11px; color: var(--text-dim); }
+#palPop a { display: inline-block; margin-top: 10px; font-size: 12px; color: var(--accent); text-decoration: none; }
+#palPop a:hover { color: var(--accent-hover); text-decoration: underline; }
+#palPop .btns { display: flex; gap: 6px; margin-top: 14px; }
+#palPop .btns button { flex: 1; height: 36px; }
+#palPop .btns .primary { background: var(--accent); color: var(--accent-fg); }
+#palPop .btns .primary:hover { background: var(--accent-hover); }
+#bottomright { position: fixed; right: var(--pad); bottom: var(--pad); z-index: 20; }
+#bgBtn { width: 36px; height: 36px; display: grid; place-items: center; background: var(--panel); border-radius: 8px; }
+#bgBtn:hover { background: var(--panel-2); }
+#bgBtn i, #bgPop .std i { width: 18px; height: 18px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--border-strong); }
+#bgPop { position: fixed; right: var(--pad); bottom: 64px; z-index: 45; width: 250px; padding: 12px; background: var(--panel-2); border-radius: 8px; }
+#bgPop .row { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+#bgPop .std { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px 0 5px; margin-right: 4px; }
+#bgPop .std.active { color: var(--accent); }
 #bottomleft { position: fixed; left: var(--pad); bottom: var(--pad); display: flex; gap: 8px; z-index: 20; }
 #bottomleft .group { display: flex; background: var(--panel); border-radius: 8px; overflow: hidden; }
 #bottomleft button { height: 36px; min-width: 36px; padding: 0 10px; display: grid; place-items: center; background: transparent; border-radius: 0; }

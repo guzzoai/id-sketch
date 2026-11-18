@@ -60,6 +60,18 @@
 <div id="ctxMenu" hidden></div>
 <div id="gridPop" hidden></div>
 
+<div id="palPop" hidden>
+  <h3>Eigen palet</h3>
+  <label><span>Coolors-link of hex-kleuren</span><input id="palInput" type="text" spellcheck="false" autocomplete="off" placeholder="coolors.co/palette/fffcf2-ccc5b9-403d39-252422-eb5e28"></label>
+  <div id="palPreview"></div>
+  <label><span>Naam</span><input id="palName" type="text" maxlength="24" autocomplete="off"></label>
+  <a href="https://coolors.co/palettes/trending" target="_blank" rel="noopener">Zoek een palet op Coolors ↗</a>
+  <div class="btns"><button id="palCancel">Annuleren</button><button id="palAdd" class="primary">Toevoegen</button></div>
+</div>
+
+<div id="bottomright"><button id="bgBtn" title="Canvaskleur"></button></div>
+<div id="bgPop" hidden></div>
+
 <div id="bottomleft">
   <div class="group">
     <button id="zoomOut" title="Uitzoomen (Ctrl -)"></button>

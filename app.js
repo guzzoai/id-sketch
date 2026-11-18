@@ -112,6 +112,8 @@ const ICON = {
   redo: svg('<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/>'),
   minus: svg('<path d="M5 12h14"/>'),
   plus: svg('<path d="M5 12h14M12 5v14"/>'),
+  prev: svg('<path d="M15 6l-6 6 6 6"/>'),
+  next: svg('<path d="M9 6l6 6-6 6"/>'),
   pencilSm: svg('<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>', 'style="width:14px;height:14px"'),
   trashSm: svg('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>', 'style="width:14px;height:14px"'),
 };
@@ -157,7 +159,8 @@ const state = {
   snapObjects: false,
   right: { open: true, tab: 'layers' },
   theme: 'frames',
-  palette: '',               // id of a colour palette, or '' for the colours of the theme
+  palettes: [''],            // one row of swatches each: the id of a colour palette, or '' for the colours of the theme
+  customPalettes: [],        // palettes the user added: { id, name, colors }
   style: {
     stroke: STROKES[0], bg: 'transparent', fillStyle: 'solid', strokeWidth: 2,
     strokeStyle: 'solid', roughness: 1, edges: 'round', opacity: 100, fontSize: 20,
@@ -339,7 +342,10 @@ function load() {
       if (data.right) Object.assign(state.right, data.right);
       state.bridge = !!data.bridge;
       if (data.theme) state.theme = data.theme;
-      if (data.palette) state.palette = data.palette;
+      if (Array.isArray(data.customPalettes)) state.customPalettes = data.customPalettes;
+      const rows = Array.isArray(data.palettes) ? data.palettes : [data.palette || ''];
+      state.palettes = [...new Set(rows)].filter(id => paletteIds().includes(id));
+      if (!state.palettes.length) state.palettes = [''];
     }
   } catch (e) { /* start fresh */ }
   applyTheme(state.theme);
@@ -360,7 +366,7 @@ function saveNow() {
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify({
       canvases: state.canvases, activeId: state.activeId, style: state.style,
-      grid: state.grid, snapObjects: state.snapObjects, right: state.right, bridge: !!state.bridge, theme: state.theme, palette: state.palette,
+      grid: state.grid, snapObjects: state.snapObjects, right: state.right, bridge: !!state.bridge, theme: state.theme, palettes: state.palettes, customPalettes: state.customPalettes,
     }));
   } catch (e) { console.warn('Opslaan mislukt', e); }
 }
@@ -397,22 +403,140 @@ function renderThemes() {
   $('themeName').textContent = theme.name;
   $('themeList').innerHTML = THEMES.map(t =>
     `<button data-theme="${t.id}" class="${t === theme ? 'active' : ''}" title="${t.name}" style="background:linear-gradient(90deg, ${t.panel} 36%, ${t.bg} 36%)"></button>`).join('');
-  const pal = palette();
-  const stripes = list => 'linear-gradient(90deg, ' + list.map((c, i) => `${c} ${i * 20}% ${i * 20 + 20}%`).join(', ') + ')';
-  $('paletteName').textContent = pal ? pal.name : 'Thema';
-  $('paletteList').innerHTML = [{ id: '', name: 'Kleuren van het thema', colors: theme.strokes }, ...PALETTES].map(p =>
-    `<button data-palette="${p.id}" class="${p.id === (pal ? pal.id : '') ? 'active' : ''}" title="${p.name}" style="background:${stripes(p.colors)}"></button>`).join('');
+  const stripes = list => 'linear-gradient(90deg, ' + list.map((c, i) => `${c} ${i * 100 / list.length}% ${(i + 1) * 100 / list.length}%`).join(', ') + ')';
+  const rows = paletteRows();
+  $('paletteName').textContent = (rows[0] ? rows[0].name : 'Thema') + (rows.length > 1 ? ' +' + (rows.length - 1) : '');
+  $('paletteList').innerHTML = [{ id: '', name: 'Kleuren van het thema', colors: theme.strokes }, ...allPalettes()].map(p =>
+    `<button data-palette="${p.id}" class="${state.palettes.includes(p.id) ? 'active' : ''}" title="${esc(p.name)}${isCustom(p) ? ' (rechtsklik om te verwijderen)' : ''}" style="background:${stripes(p.colors)}"></button>`).join('') +
+    `<button data-add title="Eigen palet maken">${ICON.plus}</button>`;
+  renderBg();
 }
-const palette = () => PALETTES.find(p => p.id === state.palette);
+// The style panel shows one row of swatches per entry of state.palettes ('' = the colours of the theme).
+const allPalettes = () => [...PALETTES, ...state.customPalettes];
+const paletteIds = () => ['', ...allPalettes().map(p => p.id)];
+const paletteRows = () => state.palettes.map(id => allPalettes().find(p => p.id === id));   // undefined = theme
+const isCustom = p => state.customPalettes.includes(p);
+function setPalettes(list) {
+  const ids = paletteIds();
+  state.palettes = [...new Set(list)].filter(id => ids.includes(id));
+  if (!state.palettes.length) state.palettes = [''];
+  save(); renderThemes(); renderPanel();
+}
+// the next palette in the given direction that is not on a row yet
+function freePalette(from, dir) {
+  const ids = paletteIds();
+  let i = ids.indexOf(from);
+  for (let n = 0; n < ids.length; n++) {
+    i = (i + dir + ids.length) % ids.length;
+    if (!state.palettes.includes(ids[i])) return ids[i];
+  }
+  return null;
+}
+function cycleRow(i, dir) {
+  const id = freePalette(state.palettes[i], dir);
+  if (id === null) return;
+  const list = state.palettes.slice();
+  list[i] = id;
+  setPalettes(list);
+}
+function addRow() {
+  const id = freePalette(state.palettes[state.palettes.length - 1], 1);
+  if (id !== null) setPalettes([...state.palettes, id]);
+}
+// a chip in the menu puts that palette on the first row
+function pickPalette(id) {
+  const list = state.palettes.slice(), j = list.indexOf(id);
+  if (j > 0) list[j] = list[0];
+  list[0] = id;
+  setPalettes(list);
+}
+function removePalette(p) {
+  if (!p || !isCustom(p) || !confirm(`Palet "${p.name}" verwijderen? Kleuren die je er al mee tekende blijven staan.`)) return;
+  state.customPalettes = state.customPalettes.filter(x => x !== p);
+  setPalettes(state.palettes);
+}
+
+// ---------- own palette ----------
+const parseColors = txt => [...new Set((txt.match(/(?<![0-9a-z])[0-9a-f]{6}(?![0-9a-z])/gi) || []).map(c => '#' + c.toLowerCase()))].slice(0, 12);
+function openPalPop() {
+  let n = state.customPalettes.length + 1;
+  while (allPalettes().some(p => p.name === 'Palet ' + n)) n++;
+  $('palName').value = 'Palet ' + n;
+  $('palInput').value = '';
+  syncPalPop();
+  $('palPop').hidden = false;
+  $('palInput').focus();
+}
+function syncPalPop() {
+  const colors = parseColors($('palInput').value);
+  $('palPreview').innerHTML = colors.length
+    ? colors.map(c => `<i style="background:${c}" title="${c}"></i>`).join('')
+    : '<span>De kleuren verschijnen hier</span>';
+  $('palAdd').disabled = colors.length < 2;
+}
+function addPalette() {
+  const colors = parseColors($('palInput').value);
+  if (colors.length < 2) return;
+  const p = { id: 'c' + uid(), name: $('palName').value.trim() || 'Palet', colors };
+  state.customPalettes.push(p);
+  $('palPop').hidden = true;
+  setPalettes([...state.palettes, p.id]);   // a new palette gets its own row right away
+}
+$('palInput').addEventListener('input', syncPalPop);
+$('palAdd').addEventListener('click', addPalette);
+$('palCancel').addEventListener('click', () => { $('palPop').hidden = true; });
+$('palPop').addEventListener('keydown', e => {
+  e.stopPropagation();
+  if (e.key === 'Escape') $('palPop').hidden = true;
+  if (e.key === 'Enter') addPalette();
+});
+window.addEventListener('pointerdown', e => {
+  if (!e.target.closest('#palPop')) $('palPop').hidden = true;
+}, true);
+
+// ---------- canvas colour ----------
+// A canvas can have its own background colour (doc.bg); without one it follows the theme.
+const canvasBg = () => (doc && doc.bg) || BG;
+const gridInk = () => doc && doc.bg ? (isDark(doc.bg) ? '255,255,255' : '0,0,0') : INK;
+function setCanvasBg(v, keepPop) {
+  if (v) doc.bg = v; else delete doc.bg;
+  save(); render();
+  if (keepPop) $('bgBtn').firstChild.style.background = canvasBg(); else renderBg();
+}
+function renderBg() {
+  if (!doc) return;
+  const cur = doc.bg || '', pals = paletteRows().filter(Boolean);
+  $('bgBtn').innerHTML = `<i style="background:${canvasBg()}"></i>`;
+  $('docName').style.color = cur ? (isDark(cur) ? 'rgba(255,255,255,.6)' : 'rgba(0,0,0,.6)') : '';
+  const list = pals.length ? [...new Set(pals.flatMap(p => p.colors))] : [...new Set(THEMES.map(t => t.bg))].filter(c => c !== BG);
+  $('bgPop').innerHTML = `<h3>Canvaskleur</h3><div class="row">` +
+    `<button data-bg="" class="std ${cur ? '' : 'active'}" title="De kleur van het thema"><i style="background:${BG}"></i>Standaard</button>` +
+    list.map(c => `<button data-bg="${c}" class="swatch ${cur === c ? 'active' : ''}" style="background:${c}" title="${c}"></button>`).join('') +
+    `<input type="color" value="${canvasBg()}" title="Eigen kleur"></div>`;
+}
+$('bgBtn').addEventListener('click', () => { $('bgPop').hidden = !$('bgPop').hidden; });
+$('bgPop').addEventListener('click', e => {
+  const b = e.target.closest('[data-bg]');
+  if (b) setCanvasBg(b.dataset.bg);
+});
+$('bgPop').addEventListener('input', e => { if (e.target.type === 'color') setCanvasBg(e.target.value, true); });
+$('bgPop').addEventListener('change', e => { if (e.target.type === 'color') setCanvasBg(e.target.value); });
+window.addEventListener('pointerdown', e => {
+  if (!e.target.closest('#bgPop') && !e.target.closest('#bgBtn')) $('bgPop').hidden = true;
+}, true);
 $('themeList').addEventListener('click', e => {
   const b = e.target.closest('[data-theme]');
   if (b) setTheme(b.dataset.theme);
 });
 $('paletteList').addEventListener('click', e => {
+  if (e.target.closest('[data-add]')) { openPalPop(); return; }
   const b = e.target.closest('[data-palette]');
-  if (!b) return;
-  state.palette = b.dataset.palette;
-  save(); renderThemes(); renderPanel();
+  if (b) pickPalette(b.dataset.palette);
+});
+$('paletteList').addEventListener('contextmenu', e => {
+  const b = e.target.closest('[data-palette]');
+  const p = b && state.customPalettes.find(x => x.id === b.dataset.palette);
+  if (p) { e.preventDefault(); removePalette(p); }
 });
 
 function newCanvasData(name) {
@@ -427,7 +551,7 @@ function setActive(c) {
   state.selected.clear();
   if (!histories.has(c.id)) histories.set(c.id, { undo: [], redo: [], current: JSON.stringify(c.elements) });
   $('docName').textContent = c.name;
-  renderSidebar(); renderPanel(); updateChrome(); render(); save();
+  renderSidebar(); renderPanel(); renderBg(); updateChrome(); render(); save();
 }
 
 // ---------- history ----------
@@ -1107,7 +1231,7 @@ function drawEl(c, r, el, labelOnly) {
       c.drawImage(rec.img, el.x, el.y, el.w, el.h);
     } else {
       // still loading, or the pixels are missing (e.g. opened in another browser)
-      c.strokeStyle = `rgba(${INK},0.4)`; c.lineWidth = 1; c.setLineDash([6, 5]);
+      c.strokeStyle = `rgba(${gridInk()},0.4)`; c.lineWidth = 1; c.setLineDash([6, 5]);
       c.strokeRect(el.x, el.y, el.w, el.h);
       c.beginPath(); c.moveTo(el.x, el.y); c.lineTo(el.x + el.w, el.y + el.h); c.moveTo(el.x + el.w, el.y); c.lineTo(el.x, el.y + el.h); c.stroke();
     }
@@ -1147,7 +1271,7 @@ function paint() {
   const dpr = window.devicePixelRatio || 1;
   const { zoom, scrollX, scrollY } = view();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = BG;
+  ctx.fillStyle = canvasBg();
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   paintGrid(dpr);
   ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, dpr * zoom * scrollX, dpr * zoom * scrollY);
@@ -1221,7 +1345,7 @@ function paint() {
 }
 function drawHandle(x, y, roundHandle, filled) {
   const s = 8 / view().zoom;
-  ctx.fillStyle = filled ? ACCENT : BG; ctx.strokeStyle = ACCENT; ctx.lineWidth = 1 / view().zoom;
+  ctx.fillStyle = filled ? ACCENT : canvasBg(); ctx.strokeStyle = ACCENT; ctx.lineWidth = 1 / view().zoom;
   ctx.beginPath();
   if (roundHandle) ctx.arc(x, y, s / 2 + 1 / view().zoom, 0, Math.PI * 2);
   else ctx.rect(x - s / 2, y - s / 2, s, s);
@@ -1280,13 +1404,13 @@ function paintGrid(dpr) {
   const sx = i => (i * ws + scrollX) * zoom * dpr, sy = j => (j * ws + scrollY) * zoom * dpr;
   if (g.type === 'dots') {
     const r = Math.max(1, Math.round(1.5 * dpr));
-    ctx.fillStyle = `rgba(${INK},${a})`;
+    ctx.fillStyle = `rgba(${gridInk()},${a})`;
     for (let i = i0; sx(i) <= W; i++) for (let j = j0; sy(j) <= H; j++) ctx.fillRect(Math.round(sx(i) - r / 2), Math.round(sy(j) - r / 2), r, r);
     return;
   }
   ctx.lineWidth = 1;
   for (const major of [false, true]) {
-    ctx.strokeStyle = `rgba(${INK},${major ? a : a * 0.4})`;
+    ctx.strokeStyle = `rgba(${gridInk()},${major ? a : a * 0.4})`;
     ctx.beginPath();
     for (let i = i0; sx(i) <= W; i++) if ((i % 5 === 0) === major) { const x = Math.round(sx(i)) + 0.5; ctx.moveTo(x, 0); ctx.lineTo(x, H); }
     for (let j = j0; sy(j) <= H; j++) if ((j % 5 === 0) === major) { const y = Math.round(sy(j)) + 0.5; ctx.moveTo(0, y); ctx.lineTo(W, y); }
@@ -2135,16 +2259,24 @@ function renderPanel() {
   const row = (title, inner) => `<h3>${title}</h3><div class="row">${inner}</div>`;
   const opts = (k, list) => list.map(o =>
     `<button data-i="${reg({ k, v: o.v })}" class="${cur(k) === o.v ? 'active' : ''}" title="${o.t}">${o.icon || o.label}</button>`).join('');
-  const swatches = (k, list) => list.map(c =>
-    `<button data-i="${reg({ k, v: c })}" class="swatch ${c === 'transparent' ? 'none' : ''} ${cur(k) === c ? 'active' : ''}" style="${c === 'transparent' ? '' : 'background:' + tc(c)}" title="${c === 'transparent' ? 'Transparant' : tc(c)}"></button>`).join('') +
-    `<input type="color" data-color="${k}" value="${/^#[0-9a-f]{6}$/i.test(cur(k)) ? tc(cur(k)) : BG}" title="Eigen kleur">`;
+  const swatch = (k, c) =>
+    `<button data-i="${reg({ k, v: c })}" class="swatch ${c === 'transparent' ? 'none' : ''} ${cur(k) === c ? 'active' : ''}" style="${c === 'transparent' ? '' : 'background:' + tc(c)}" title="${c === 'transparent' ? 'Transparant' : tc(c)}"></button>`;
+  // One row of swatches per palette, each with its own button to step to the next palette (the wheel works too).
+  // Below them: no fill, an own colour, and one row less or more.
+  const mini = (fn, icon, t, off) => `<button class="mini" data-i="${reg({ act: fn })}" title="${t}" ${off ? 'disabled' : ''}>${ICON[icon]}</button>`;
+  const pals = paletteRows(), full = pals.length >= paletteIds().length;
+  const swatches = (title, k, fill) => `<h3>${title}</h3>` + pals.map((p, i) =>
+    `<div class="row pal" data-palrow="${i}">` + (p ? p.colors : fill ? BGS.slice(1) : STROKES).map(c => swatch(k, c)).join('') +
+    mini(() => cycleRow(i, 1), 'next', `${esc(p ? p.name : 'Thema')}: wissel naar het volgende palet`, full) + `</div>`).join('') +
+    `<div class="row pal">` + (fill ? swatch(k, 'transparent') : '') +
+    `<input type="color" data-color="${k}" value="${/^#[0-9a-f]{6}$/i.test(cur(k)) ? tc(cur(k)) : BG}" title="Eigen kleur">` +
+    (pals.length > 1 ? mini(() => setPalettes(state.palettes.slice(0, -1)), 'minus', 'Laatste paletrij weghalen') : '') +
+    mini(addRow, 'plus', 'Rij toevoegen met het volgende palet', full) + `</div>`;
 
   const onlyImages = sel.length > 0 && sel.every(e => e.type === 'image');
-  const pal = palette();
-  const inks = pal ? pal.colors : STROKES, fills = pal ? ['transparent', ...pal.colors] : BGS;
-  let html = onlyImages ? '' : row('Lijn', swatches('stroke', inks));
+  let html = onlyImages ? '' : swatches('Lijn', 'stroke');
   if (hasShape) {
-    html += row('Achtergrond', swatches('bg', fills));
+    html += swatches('Achtergrond', 'bg', true);
     if (cur('bg') !== 'transparent') html += row('Invulling', opts('fillStyle', [
       { v: 'hachure', icon: ICON.hachure, t: 'Arcering' }, { v: 'cross-hatch', icon: ICON.cross, t: 'Kruisarcering' }, { v: 'solid', icon: ICON.solid, t: 'Effen' }]));
   }
@@ -2165,7 +2297,7 @@ function renderPanel() {
     { v: 'sharp', icon: ICON.sharp, t: 'Scherp' }, { v: 'round', icon: ICON.round, t: 'Rond' }]));
   if (hasText) html += row('Lettergrootte', opts('fontSize', [
     { v: 16, label: 'S', t: 'Klein' }, { v: 20, label: 'M', t: 'Normaal' }, { v: 28, label: 'L', t: 'Groot' }, { v: 36, label: 'XL', t: 'Extra groot' }]));
-  if (labelEl) html += row('Tekstkleur', swatches('textColor', inks));
+  if (labelEl) html += swatches('Tekstkleur', 'textColor');
   if (coneEl && !editing) {
     const what = coneEl.kind === 'camera' ? 'Kijkhoek' : 'Lichtbundel';
     html += `<h3>${what} <span class="val">${cur('fov')}°</span></h3><input type="range" min="5" max="170" step="5" value="${cur('fov')}" data-range="fov"><div class="scale"><span>smal</span><span>breed</span></div>`;
@@ -2213,6 +2345,15 @@ $('panel').addEventListener('click', e => {
   const r = registry[+b.dataset.i];
   if (r.act) r.act(); else setProp(r.k, r.v);
 });
+let palWheel = 0;
+$('panel').addEventListener('wheel', e => {
+  const line = e.target.closest('[data-palrow]');
+  if (!line) return;
+  e.preventDefault();
+  if (Date.now() - palWheel < 180) return;   // a touchpad fires a burst of events for one swipe
+  palWheel = Date.now();
+  cycleRow(+line.dataset.palrow, e.deltaY > 0 ? 1 : -1);
+}, { passive: false });
 $('panel').addEventListener('input', e => {
   const t = e.target;
   if (t.dataset.range) setProp(t.dataset.range, +t.value, false);
@@ -2443,7 +2584,7 @@ function renderPng(list, scale, maxSize) {
   off.width = Math.max(1, Math.ceil(bw * scale));
   off.height = Math.max(1, Math.ceil(bh * scale));
   const c = off.getContext('2d');
-  c.fillStyle = BG; c.fillRect(0, 0, off.width, off.height);
+  c.fillStyle = canvasBg(); c.fillRect(0, 0, off.width, off.height);
   c.setTransform(scale, 0, 0, scale, (pad - x1) * scale, (pad - y1) * scale);
   drawList(c, rough.canvas(off), list, false);
   return off;
