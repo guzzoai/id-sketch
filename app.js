@@ -165,6 +165,7 @@ const state = {
     stroke: STROKES[0], bg: 'transparent', fillStyle: 'solid', strokeWidth: 2,
     strokeStyle: 'solid', roughness: 1, edges: 'round', opacity: 100, fontSize: 20,
     headStart: 'none', headEnd: 'arrow',
+    smooth: 40,              // pencil: 0 = follow the hand exactly, 100 = strongest smoothing
   },
 };
 let doc = null;            // active canvas
@@ -1276,6 +1277,14 @@ function paint() {
   paintGrid(dpr);
   ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, dpr * zoom * scrollX, dpr * zoom * scrollY);
   drawList(ctx, rc, visEls(), true);
+  if (drag && drag.type === 'draw' && drag.cursor && state.style.smooth) {
+    // the string between the pencil and the pointer
+    const el = drag.el;
+    ctx.strokeStyle = ACCENT; ctx.lineWidth = 1 / zoom; ctx.setLineDash([]);
+    ctx.globalAlpha = 0.6;
+    ctx.beginPath(); ctx.moveTo(el.x + drag.tip[0], el.y + drag.tip[1]); ctx.lineTo(el.x + drag.cursor[0], el.y + drag.cursor[1]); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
   if (guides.length) {
     ctx.strokeStyle = ACCENT; ctx.lineWidth = 1 / zoom; ctx.setLineDash([]);
     ctx.beginPath();
@@ -1790,10 +1799,20 @@ canvas.addEventListener('pointermove', e => {
       el.w = Math.abs(dx); el.h = Math.abs(dy);
     }
   } else if (d.type === 'draw') {
+    // Smoothing: the pencil is pulled along on a string behind the pointer, so small trembles of the hand
+    // never reach the line. The string gets longer with the smoothing setting.
     const el = d.el;
     const last = el.points[el.points.length - 1];
-    const nx = p.x - el.x, ny = p.y - el.y;
-    if (Math.hypot(nx - last[0], ny - last[1]) * view().zoom >= 1.5) el.points.push([nx, ny]);
+    const tip = d.tip || (d.tip = [0, 0]);
+    const cx = p.x - el.x, cy = p.y - el.y;
+    const string = (state.style.smooth || 0) * 0.4 / view().zoom;
+    const dist = Math.hypot(cx - tip[0], cy - tip[1]);
+    if (dist > string) {
+      const k = dist ? (dist - string) / dist : 0;
+      tip[0] += (cx - tip[0]) * k; tip[1] += (cy - tip[1]) * k;
+    }
+    d.cursor = [cx, cy];
+    if (Math.hypot(tip[0] - last[0], tip[1] - last[1]) * view().zoom >= 1.5) el.points.push([tip[0], tip[1]]);
   } else if (d.type === 'endpoint') {
     const el = d.el;
     const sp = snapPoint(p, e, d.targets);
@@ -1883,6 +1902,8 @@ function endPointer(e) {
     }
   } else if (d.type === 'endpoint') {
     normalizeLinear(d.el);
+  } else if (d.type === 'draw') {
+    finishStroke(d);
   } else if (d.type === 'erase') {
     if (erasing.size) doc.elements = els().filter(el => !erasing.has(el.id));
     erasing = new Set();
@@ -1892,6 +1913,19 @@ function endPointer(e) {
 canvas.addEventListener('pointerup', endPointer);
 canvas.addEventListener('pointercancel', endPointer);
 
+// a smoothed pencil line ends where the pencil is, not at the pointer; iron out what jitter is left
+function finishStroke(d) {
+  const amount = state.style.smooth || 0, pts = d.el.points;
+  if (!amount) return;
+  for (let n = Math.round(amount / 6); n > 0 && pts.length > 2; n--) {
+    let prev = pts[0];
+    for (let i = 1; i < pts.length - 1; i++) {
+      const cur = pts[i], next = pts[i + 1];
+      pts[i] = [(prev[0] + 2 * cur[0] + next[0]) / 4, (prev[1] + 2 * cur[1] + next[1]) / 4];
+      prev = cur;
+    }
+  }
+}
 function snapAngle(dx, dy) {
   const len = Math.hypot(dx, dy);
   const step = Math.PI / 12;
@@ -2302,6 +2336,10 @@ function renderPanel() {
     const what = coneEl.kind === 'camera' ? 'Kijkhoek' : 'Lichtbundel';
     html += `<h3>${what} <span class="val">${cur('fov')}°</span></h3><input type="range" min="5" max="170" step="5" value="${cur('fov')}" data-range="fov"><div class="scale"><span>smal</span><span>breed</span></div>`;
     html += `<h3>Bereik</h3><input type="range" min="40" max="900" step="10" value="${Math.min(900, cur('range'))}" data-range="range"><div class="scale"><span>kort</span><span>ver</span></div>`;
+  }
+  if (state.tool === 'draw' && !sel.length) {
+    const v = state.style.smooth || 0;
+    html += `<h3>Vloeiend tekenen <span class="val">${v ? v : 'uit'}</span></h3><input type="range" min="0" max="100" step="5" value="${v}" data-range="smooth" title="Hoe sterk de lijn wordt gladgestreken terwijl je tekent"><div class="scale"><span>uit</span><span>sterk</span></div>`;
   }
   html += `<h3>Doorzichtigheid</h3><input type="range" min="0" max="100" step="10" value="${cur('opacity')}" data-range="opacity"><div class="scale"><span>0</span><span>100</span></div>`;
   if (sel.length && !editing) {
